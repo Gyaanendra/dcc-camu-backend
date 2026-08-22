@@ -32,7 +32,7 @@ router.get('/', verifyToken, async (req: AuthenticatedRequest, res: Response) =>
 
     return res.json({ sessions: enriched });
   } catch (error: any) {
-    console.error('Error fetching sessions:', error);
+    console.error('[Sessions Route] Error fetching sessions:', error);
     return res.status(500).json({ error: 'Failed to fetch sessions.' });
   }
 });
@@ -70,6 +70,7 @@ router.get('/:id', verifyToken, async (req: AuthenticatedRequest, res: Response)
       attendeeCount: attendees.length,
     });
   } catch (error: any) {
+    console.error(`[Sessions Route] Error fetching session ${req.params.id}:`, error);
     return res.status(500).json({ error: 'Failed to fetch session detail.' });
   }
 });
@@ -107,13 +108,45 @@ router.post('/', verifyToken, requireAdmin, async (req: AuthenticatedRequest, re
       })
       .returning();
 
+    console.log(`[Sessions Route] Admin ${req.user!.email} created live session: "${newSession.title}" (${newSession.id})`);
+
     return res.status(201).json({
       message: 'Session created successfully',
       session: newSession,
     });
   } catch (error: any) {
-    console.error('Error creating session:', error);
+    console.error('[Sessions Route] Error creating session:', error);
     return res.status(500).json({ error: 'Failed to create session.' });
+  }
+});
+
+// PATCH /api/sessions/:id/status (Admin: Close or Re-activate Live Session QR)
+router.patch('/:id/status', verifyToken, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { isActive } = req.body;
+
+    const statusValue = isActive === true || isActive === 'true' ? 'true' : 'false';
+
+    const [updatedSession] = await db
+      .update(sessions)
+      .set({ isActive: statusValue })
+      .where(eq(sessions.id, id))
+      .returning();
+
+    if (!updatedSession) {
+      return res.status(404).json({ error: 'Session not found' });
+    }
+
+    console.log(`[Sessions Route] Admin ${req.user!.email} updated session ${id} status to: ${statusValue === 'true' ? 'LIVE' : 'CLOSED'}`);
+
+    return res.json({
+      message: statusValue === 'true' ? 'Session QR re-opened' : 'Live Session QR ended and closed successfully',
+      session: updatedSession,
+    });
+  } catch (error: any) {
+    console.error(`[Sessions Route] Error updating session status ${req.params.id}:`, error);
+    return res.status(500).json({ error: 'Failed to update session status' });
   }
 });
 

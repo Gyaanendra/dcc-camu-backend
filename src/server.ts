@@ -25,6 +25,32 @@ app.use(
 
 app.use(express.json());
 
+// Comprehensive Request Logger Middleware
+app.use((req: Request, res: Response, next: NextFunction) => {
+  const start = Date.now();
+  const { method, originalUrl, ip } = req;
+
+  res.on('finish', () => {
+    const duration = Date.now() - start;
+    const statusCode = res.statusCode;
+    const statusColor =
+      statusCode >= 500
+        ? '🔴'
+        : statusCode >= 400
+        ? '🟡'
+        : statusCode >= 300
+        ? '🔵'
+        : '🟢';
+
+    const timestamp = new Date().toLocaleTimeString();
+    console.log(
+      `[${timestamp}] ${statusColor} ${method} ${originalUrl} -> ${statusCode} (${duration}ms)`
+    );
+  });
+
+  next();
+});
+
 // Health Check & Database Version Endpoint
 app.get('/', async (req: Request, res: Response) => {
   try {
@@ -55,7 +81,7 @@ app.use('/api/users', usersRoutes);
 
 // Error handling middleware
 app.use((err: any, req: Request, res: Response, next: NextFunction) => {
-  console.error('Unhandled Error:', err);
+  console.error('❌ [Unhandled Server Error]:', err);
   res.status(500).json({ error: 'Internal Server Error', message: err.message });
 });
 
