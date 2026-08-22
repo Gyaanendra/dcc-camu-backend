@@ -66,6 +66,14 @@ router.post('/scan', verifyToken, async (req: AuthenticatedRequest, res: Respons
 
     const session = foundSessions[0];
 
+    // Check if session has been closed / ended
+    if (session.isActive !== 'true') {
+      return res.status(400).json({
+        error: `Session "${session.title}" has ended and Live QR attendance is closed.`,
+        isEnded: true,
+      });
+    }
+
     // Verify User
     const targetUserList = await db.select().from(users).where(eq(users.id, targetUserId)).limit(1);
     if (targetUserList.length === 0) {
