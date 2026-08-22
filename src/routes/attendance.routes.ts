@@ -17,7 +17,16 @@ router.post('/scan', verifyToken, async (req: AuthenticatedRequest, res: Respons
 
     // Case 1: Member scanned a Session QR token
     if (qrCodeToken) {
-      const foundSessions = await db.select().from(sessions).where(eq(sessions.qrCodeToken, qrCodeToken.trim())).limit(1);
+      let cleanToken = qrCodeToken.trim();
+      // If token is wrapped in JSON, extract token field
+      if (cleanToken.startsWith('{') && cleanToken.endsWith('}')) {
+        try {
+          const parsed = JSON.parse(cleanToken);
+          if (parsed.qrCodeToken || parsed.token) cleanToken = (parsed.qrCodeToken || parsed.token).trim();
+        } catch (_) {}
+      }
+
+      const foundSessions = await db.select().from(sessions).where(eq(sessions.qrCodeToken, cleanToken)).limit(1);
 
       if (foundSessions.length === 0) {
         return res.status(404).json({ error: 'Invalid or expired Session QR Code.' });
@@ -25,13 +34,26 @@ router.post('/scan', verifyToken, async (req: AuthenticatedRequest, res: Respons
 
       const session = foundSessions[0];
       targetSessionId = session.id;
-    } else if (memberRollNumber && currentUser.role === 'admin' && sessionId) {
-      // Case 2: Admin scanned a Member's Roll Number / QR badge
-      const foundMembers = await db.select().from(users).where(eq(users.rollNumber, memberRollNumber.trim())).limit(1);
-      if (foundMembers.length === 0) {
+    } else if (memberRollNumber && currentUser.role === 'admin') {
+      // Case 2: Admin scanned or entered a Member's Roll Number
+      const trimmedRoll = memberRollNumber.trim().toUpperCase();
+      const allUsers = await db.select().from(users);
+      const targetUser = allUsers.find(u => u.rollNumber.trim().toUpperCase() === trimmedRoll);
+
+      if (!targetUser) {
         return res.status(404).json({ error: `Member with Roll Number "${memberRollNumber}" not found.` });
       }
-      targetUserId = foundMembers[0].id;
+      targetUserId = targetUser.id;
+
+      // Auto-detect active session if targetSessionId not provided
+      if (!targetSessionId) {
+        const activeSessions = await db.select().from(sessions).where(eq(sessions.isActive, 'true')).orderBy(desc(sessions.startTime)).limit(1);
+        if (activeSessions.length > 0) {
+          targetSessionId = activeSessions[0].id;
+        } else {
+          return res.status(400).json({ error: 'No live session currently active. Please activate a session in Sessions & QR.' });
+        }
+      }
     } else {
       return res.status(400).json({ error: 'Invalid scan payload. Provide valid QR token or Roll Number.' });
     }
@@ -191,8 +213,8 @@ router.get('/my-stats', verifyToken, async (req: AuthenticatedRequest, res: Resp
   }
 });
 
-// GET /api/attendance/analytics (Admin: Comprehensive Analytics Engine)
-router.get('/analytics', verifyToken, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
+// GET /api/attendance/analytics or /api/attendance/admin-analytics (Admin: Comprehensive Analytics Engine)
+const getAdminAnalyticsHandler = async (req: AuthenticatedRequest, res: Response) => {
   try {
     const allUsers = await db.select().from(users);
     const allTeams = await db.select().from(teams);
@@ -274,6 +296,9 @@ router.get('/analytics', verifyToken, requireAdmin, async (req: AuthenticatedReq
     console.error('Analytics computation error:', error);
     return res.status(500).json({ error: 'Failed to compute analytics.' });
   }
-});
+};
+
+router.get('/analytics', verifyToken, requireAdmin, getAdminAnalyticsHandler);
+router.get('/admin-analytics', verifyToken, requireAdmin, getAdminAnalyticsHandler);
 
 export default router;
