@@ -49,11 +49,25 @@ router.post('/', verifyToken, requireAdmin, async (req: AuthenticatedRequest, re
       return res.status(400).json({ error: 'Team name and code are required.' });
     }
 
+    const trimmedName = name.trim();
+    const trimmedCode = code.trim().toUpperCase();
+
+    // Friendly duplicate checks instead of raw DB unique-constraint 500 errors
+    const existingName = await db.select().from(teams).where(eq(teams.name, trimmedName)).limit(1);
+    if (existingName.length > 0) {
+      return res.status(400).json({ error: `A team named "${trimmedName}" already exists.` });
+    }
+
+    const existingCode = await db.select().from(teams).where(eq(teams.code, trimmedCode)).limit(1);
+    if (existingCode.length > 0) {
+      return res.status(400).json({ error: `Team code "${trimmedCode}" is already in use.` });
+    }
+
     const [newTeam] = await db
       .insert(teams)
       .values({
-        name: name.trim(),
-        code: code.trim().toUpperCase(),
+        name: trimmedName,
+        code: trimmedCode,
         description: description || '',
         color: color || '#3b82f6',
       })

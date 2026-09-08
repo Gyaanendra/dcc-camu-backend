@@ -6,6 +6,89 @@ import { verifyToken, requireAdmin, AuthenticatedRequest } from '../middleware/a
 
 const router = Router();
 
+// Bennett Email Pattern Regex (same rule as auth registration)
+const BENNETT_EMAIL_REGEX = /^[a-zA-Z0-9._%+-]+@bennett\.edu\.in$/i;
+
+// POST /api/users (Admin: Create a new member directly)
+router.post('/', verifyToken, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { name, email, password, rollNumber, position, teamId, role } = req.body;
+
+    if (!name || !email || !password || !rollNumber) {
+      return res.status(400).json({ error: 'Name, email, password, and roll number are required.' });
+    }
+
+    const trimmedEmail = email.trim().toLowerCase();
+
+    if (!BENNETT_EMAIL_REGEX.test(trimmedEmail)) {
+      return res.status(400).json({
+        error: 'Member requires a valid Bennett University email address ending with @bennett.edu.in (e.g. s24cseu0771@bennett.edu.in).',
+      });
+    }
+
+    // Check existing email / roll number
+    const existingEmail = await db.select().from(users).where(eq(users.email, trimmedEmail)).limit(1);
+    if (existingEmail.length > 0) {
+      return res.status(400).json({ error: 'An account with this Bennett email already exists.' });
+    }
+
+    const trimmedRoll = rollNumber.trim();
+    const existingRoll = await db.select().from(users).where(eq(users.rollNumber, trimmedRoll)).limit(1);
+    if (existingRoll.length > 0) {
+      return res.status(400).json({ error: 'An account with this roll number already exists.' });
+    }
+
+    // Validate team assignment if provided
+    let validatedTeamId: string | null = null;
+    if (teamId && teamId.trim()) {
+      const foundTeam = await db.select().from(teams).where(eq(teams.id, teamId.trim())).limit(1);
+      if (foundTeam.length === 0) {
+        return res.status(400).json({ error: 'Assigned team not found.' });
+      }
+      validatedTeamId = foundTeam[0].id;
+    }
+
+    // Role can only be 'admin' when explicitly set by an admin (defaults to 'user')
+    const assignedRole = role === 'admin' ? 'admin' : 'user';
+
+    const [newUser] = await db
+      .insert(users)
+      .values({
+        name: name.trim(),
+        email: trimmedEmail,
+        password: password.trim(),
+        rollNumber: trimmedRoll,
+        position: position?.trim() || 'Member',
+        role: assignedRole,
+        teamId: validatedTeamId,
+      })
+      .returning();
+
+    // Fetch team info if assigned
+    let teamName = 'Unassigned';
+    let teamCode = 'N/A';
+    if (newUser.teamId) {
+      const [team] = await db.select().from(teams).where(eq(teams.id, newUser.teamId)).limit(1);
+      if (team) {
+        teamName = team.name;
+        teamCode = team.code;
+      }
+    }
+
+    return res.status(201).json({
+      message: 'Member created successfully',
+      user: {
+        ...newUser,
+        teamName,
+        teamCode,
+      },
+    });
+  } catch (error: any) {
+    console.error('Error creating member:', error);
+    return res.status(500).json({ error: error.message || 'Failed to create member.' });
+  }
+});
+
 // GET /api/users (Admin list all users)
 router.get('/', verifyToken, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
   try {
