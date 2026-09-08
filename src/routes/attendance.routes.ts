@@ -6,6 +6,74 @@ import { verifyToken, requireAdmin, AuthenticatedRequest } from '../middleware/a
 
 const router = Router();
 
+// GET /api/attendance/sheet (Admin: full attendance matrix — members × sessions in one payload)
+router.get('/sheet', verifyToken, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const [allUsers, allSessions, allAttendance, allTeams] = await Promise.all([
+      db.select().from(users),
+      db.select().from(sessions).orderBy(desc(sessions.startTime)),
+      db.select().from(attendance),
+      db.select().from(teams),
+    ]);
+
+    const teamMap = new Map(allTeams.map(t => [t.id, t]));
+    // "userId:sessionId" -> status, for O(1) cell lookups
+    const recordMap = new Map(allAttendance.map(a => [`${a.userId}:${a.sessionId}`, a.status]));
+
+    const sessionList = allSessions.map(s => ({
+      id: s.id,
+      title: s.title,
+      type: s.type,
+      startTime: s.startTime,
+      isActive: s.isActive,
+    }));
+
+    const members = allUsers
+      .map(u => {
+        const team = u.teamId ? teamMap.get(u.teamId) : null;
+        const records: Record<string, string | null> = {};
+        let attended = 0;
+        for (const s of allSessions) {
+          const status = recordMap.get(`${u.id}:${s.id}`) || null;
+          records[s.id] = status;
+          if (status) attended++;
+        }
+        return {
+          id: u.id,
+          name: u.name,
+          rollNumber: u.rollNumber,
+          position: u.position,
+          role: u.role,
+          teamId: u.teamId,
+          teamName: team ? team.name : 'Unassigned',
+          teamCode: team ? team.code : 'N/A',
+          attended,
+          attendanceRate: allSessions.length > 0 ? Math.round((attended / allSessions.length) * 100) : 0,
+          records,
+        };
+      })
+      // Team-wise ordering (Unassigned last), then by name
+      .sort((a, b) => {
+        const teamRank = (t: string) => (t === 'Unassigned' ? 1 : 0);
+        if (teamRank(a.teamName) !== teamRank(b.teamName)) return teamRank(a.teamName) - teamRank(b.teamName);
+        return a.teamName.localeCompare(b.teamName) || a.name.localeCompare(b.name);
+      });
+
+    return res.json({
+      sessions: sessionList,
+      members,
+      summary: {
+        totalMembers: allUsers.length,
+        totalSessions: allSessions.length,
+        totalRecords: allAttendance.length,
+      },
+    });
+  } catch (error: any) {
+    console.error('Error building attendance sheet:', error);
+    return res.status(500).json({ error: 'Failed to build attendance sheet.' });
+  }
+});
+
 // POST /api/attendance/scan (Process high-speed QR check-in)
 router.post('/scan', verifyToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
