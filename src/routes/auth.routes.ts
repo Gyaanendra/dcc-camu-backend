@@ -177,38 +177,10 @@ router.get('/me', verifyToken, async (req: AuthenticatedRequest, res: Response) 
   }
 });
 
-// PUT /api/auth/profile (User updates their own position & name)
+// PUT /api/auth/profile — DISABLED: users cannot edit their own details.
+// Only admins can update names/positions via /api/users/:id.
 router.put('/profile', verifyToken, async (req: AuthenticatedRequest, res: Response) => {
-  try {
-    const { position, name } = req.body;
-    const userId = req.user!.id;
-
-    const updateData: any = {};
-    if (position !== undefined) updateData.position = position.trim() || 'Member';
-    if (name !== undefined) updateData.name = name.trim();
-
-    const [updatedUser] = await db
-      .update(users)
-      .set(updateData)
-      .where(eq(users.id, userId))
-      .returning();
-
-    return res.json({
-      message: 'Profile position updated successfully',
-      user: {
-        id: updatedUser.id,
-        name: updatedUser.name,
-        email: updatedUser.email,
-        rollNumber: updatedUser.rollNumber,
-        position: updatedUser.position,
-        role: updatedUser.role,
-        teamId: updatedUser.teamId,
-      },
-    });
-  } catch (error: any) {
-    console.error('Update profile error:', error);
-    return res.status(500).json({ error: 'Failed to update position profile.' });
-  }
+  return res.status(403).json({ error: 'Profile self-editing is disabled. Please contact an admin to update your details.' });
 });
 
 export default router;

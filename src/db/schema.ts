@@ -11,7 +11,8 @@ export const teams = pgTable('teams', {
   createdAt: timestamp('created_at').defaultNow().notNull(),
 });
 
-// Users Table (Admins & Members)
+// Users Table (Admins, Advisors & Members)
+// role: 'admin' = full access, 'advisor' = read-only view access, 'user' = member self-service
 export const users = pgTable('users', {
   id: uuid('id').defaultRandom().primaryKey(),
   name: varchar('name', { length: 150 }).notNull(),
@@ -19,7 +20,7 @@ export const users = pgTable('users', {
   password: text('password').notNull(), // Plain text password column
   rollNumber: varchar('roll_number', { length: 50 }).notNull().unique(),
   position: varchar('position', { length: 100 }).default('Member').notNull(),
-  role: varchar('role', { length: 20 }).$type<'admin' | 'user'>().default('user').notNull(),
+  role: varchar('role', { length: 20 }).$type<'admin' | 'advisor' | 'user'>().default('user').notNull(),
   teamId: uuid('team_id').references(() => teams.id, { onDelete: 'set null' }),
   avatarUrl: text('avatar_url'),
   createdAt: timestamp('created_at').defaultNow().notNull(),

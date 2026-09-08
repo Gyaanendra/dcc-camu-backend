@@ -2,12 +2,12 @@ import { Router, Response } from 'express';
 import { db } from '../db';
 import { attendance, sessions, users, teams } from '../db/schema';
 import { eq, and, desc, sql } from 'drizzle-orm';
-import { verifyToken, requireAdmin, AuthenticatedRequest } from '../middleware/auth';
+import { verifyToken, requireAdmin, requireViewer, blockAdvisor, AuthenticatedRequest } from '../middleware/auth';
 
 const router = Router();
 
-// GET /api/attendance/sheet (Admin: full attendance matrix — members × sessions in one payload)
-router.get('/sheet', verifyToken, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
+// GET /api/attendance/sheet (Admin + Advisor read-only: full attendance matrix — members × sessions in one payload)
+router.get('/sheet', verifyToken, requireViewer, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const [allUsers, allSessions, allAttendance, allTeams] = await Promise.all([
       db.select().from(users),
@@ -74,8 +74,8 @@ router.get('/sheet', verifyToken, requireAdmin, async (req: AuthenticatedRequest
   }
 });
 
-// POST /api/attendance/scan (Process high-speed QR check-in)
-router.post('/scan', verifyToken, async (req: AuthenticatedRequest, res: Response) => {
+// POST /api/attendance/scan (Process high-speed QR check-in — advisors are view-only, blocked)
+router.post('/scan', verifyToken, blockAdvisor, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { qrCodeToken, memberRollNumber, sessionId } = req.body;
     const currentUser = req.user!;
@@ -374,7 +374,7 @@ const getAdminAnalyticsHandler = async (req: AuthenticatedRequest, res: Response
   }
 };
 
-router.get('/analytics', verifyToken, requireAdmin, getAdminAnalyticsHandler);
-router.get('/admin-analytics', verifyToken, requireAdmin, getAdminAnalyticsHandler);
+router.get('/analytics', verifyToken, requireViewer, getAdminAnalyticsHandler);
+router.get('/admin-analytics', verifyToken, requireViewer, getAdminAnalyticsHandler);
 
 export default router;

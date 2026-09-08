@@ -5,7 +5,7 @@ export interface AuthUser {
   id: string;
   email: string;
   name: string;
-  role: 'admin' | 'user';
+  role: 'admin' | 'advisor' | 'user';
   position: string;
   teamId?: string | null;
   rollNumber: string;
@@ -38,6 +38,23 @@ export const verifyToken = (req: AuthenticatedRequest, res: Response, next: Next
 export const requireAdmin = (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   if (!req.user || req.user.role !== 'admin') {
     return res.status(403).json({ error: 'Access denied. Admin role required.' });
+  }
+  next();
+};
+
+// Advisor = strictly read-only. Allowed to call GET/view endpoints,
+// blocked from every POST/PUT/PATCH/DELETE mutation.
+export const requireViewer = (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  if (!req.user || (req.user.role !== 'admin' && req.user.role !== 'advisor')) {
+    return res.status(403).json({ error: 'Access denied. Admin or Advisor role required.' });
+  }
+  next();
+};
+
+// Block advisor accounts from any state-changing operation.
+export const blockAdvisor = (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  if (req.user?.role === 'advisor') {
+    return res.status(403).json({ error: 'Advisors have view-only access. Editing, creating, or scanning is disabled.' });
   }
   next();
 };

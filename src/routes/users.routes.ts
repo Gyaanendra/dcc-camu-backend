@@ -2,7 +2,7 @@ import { Router, Response } from 'express';
 import { db } from '../db';
 import { users, teams, attendance } from '../db/schema';
 import { eq } from 'drizzle-orm';
-import { verifyToken, requireAdmin, AuthenticatedRequest } from '../middleware/auth';
+import { verifyToken, requireAdmin, requireViewer, AuthenticatedRequest } from '../middleware/auth';
 
 const router = Router();
 
@@ -48,8 +48,9 @@ router.post('/', verifyToken, requireAdmin, async (req: AuthenticatedRequest, re
       validatedTeamId = foundTeam[0].id;
     }
 
-    // Role can only be 'admin' when explicitly set by an admin (defaults to 'user')
-    const assignedRole = role === 'admin' ? 'admin' : 'user';
+    // Role can be 'admin' | 'advisor' | 'user' when explicitly set by an admin (defaults to 'user').
+    // 'advisor' is a read-only role: can view dashboards/directories/sheets, cannot mutate anything.
+    const assignedRole = role === 'admin' || role === 'advisor' ? role : 'user';
 
     const [newUser] = await db
       .insert(users)
@@ -89,8 +90,8 @@ router.post('/', verifyToken, requireAdmin, async (req: AuthenticatedRequest, re
   }
 });
 
-// GET /api/users (Admin list all users)
-router.get('/', verifyToken, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
+// GET /api/users (Admin + Advisor read-only list all users)
+router.get('/', verifyToken, requireViewer, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const allUsers = await db.select().from(users);
     const allTeams = await db.select().from(teams);
@@ -135,7 +136,7 @@ const updateUserHandler = async (req: AuthenticatedRequest, res: Response) => {
     if (existing.length === 0) return res.status(404).json({ error: 'User not found.' });
 
     const updateFields: any = {};
-    if (role && (role === 'admin' || role === 'user')) updateFields.role = role;
+    if (role && (role === 'admin' || role === 'advisor' || role === 'user')) updateFields.role = role;
     if (position !== undefined) updateFields.position = position.trim() || 'Member';
     if (teamId !== undefined) updateFields.teamId = teamId || null;
     if (name !== undefined && name.trim()) updateFields.name = name.trim();
