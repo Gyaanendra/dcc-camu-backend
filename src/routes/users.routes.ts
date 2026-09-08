@@ -41,8 +41,8 @@ router.get('/', verifyToken, requireAdmin, async (req: AuthenticatedRequest, res
   }
 });
 
-// PUT /api/users/:id/role (Admin update role, position, or team)
-router.put('/:id/role', verifyToken, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
+// PUT / PATCH /api/users/:id/role (Admin update role, position, or team)
+const updateRoleHandler = async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { id } = req.params;
     const { role, position, teamId } = req.body;
@@ -62,6 +62,9 @@ router.put('/:id/role', verifyToken, requireAdmin, async (req: AuthenticatedRequ
   } catch (error: any) {
     return res.status(500).json({ error: 'Failed to update user.' });
   }
-});
+};
+
+router.put('/:id/role', verifyToken, requireAdmin, updateRoleHandler);
+router.patch('/:id/role', verifyToken, requireAdmin, updateRoleHandler);
 
 export default router;
