@@ -1,7 +1,7 @@
 import { Router, Response } from 'express';
 import { db } from '../db';
 import { attendance, sessions, users, teams } from '../db/schema';
-import { eq, and, desc } from 'drizzle-orm';
+import { eq, and, desc, sql } from 'drizzle-orm';
 import { verifyToken, requireAdmin, AuthenticatedRequest } from '../middleware/auth';
 
 const router = Router();
@@ -9,11 +9,11 @@ const router = Router();
 // POST /api/attendance/scan (Process high-speed QR check-in)
 router.post('/scan', verifyToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const { qrCodeToken, memberRollNumber, sessionId, scanMethod } = req.body;
+    const { qrCodeToken, memberRollNumber, sessionId } = req.body;
     const currentUser = req.user!;
 
-    let targetUserId = currentUser.id;
-    let targetSessionId = sessionId;
+    let session: any = null;
+    let targetUser: any = null;
 
     // Case 1: Member scanned a Session QR token
     if (qrCodeToken) {
@@ -27,44 +27,51 @@ router.post('/scan', verifyToken, async (req: AuthenticatedRequest, res: Respons
       }
 
       const foundSessions = await db.select().from(sessions).where(eq(sessions.qrCodeToken, cleanToken)).limit(1);
-
       if (foundSessions.length === 0) {
         return res.status(404).json({ error: 'Invalid or expired Session QR Code.' });
       }
 
-      const session = foundSessions[0];
-      targetSessionId = session.id;
+      session = foundSessions[0];
+      targetUser = {
+        id: currentUser.id,
+        name: currentUser.name,
+        rollNumber: currentUser.rollNumber,
+      };
     } else if (memberRollNumber && currentUser.role === 'admin') {
       // Case 2: Admin scanned or entered a Member's Roll Number
       const trimmedRoll = memberRollNumber.trim().toUpperCase();
-      const allUsers = await db.select().from(users);
-      const targetUser = allUsers.find(u => u.rollNumber.trim().toUpperCase() === trimmedRoll);
 
-      if (!targetUser) {
+      // Parallelize target user lookup and session resolution
+      const userPromise = db
+        .select({
+          id: users.id,
+          name: users.name,
+          rollNumber: users.rollNumber,
+        })
+        .from(users)
+        .where(sql`UPPER(${users.rollNumber}) = ${trimmedRoll}`)
+        .limit(1);
+
+      const sessionPromise = sessionId
+        ? db.select().from(sessions).where(eq(sessions.id, sessionId)).limit(1)
+        : db.select().from(sessions).where(eq(sessions.isActive, 'true')).orderBy(desc(sessions.startTime)).limit(1);
+
+      const [userResults, sessionResults] = await Promise.all([userPromise, sessionPromise]);
+
+      if (userResults.length === 0) {
         return res.status(404).json({ error: `Member with Roll Number "${memberRollNumber}" not found.` });
       }
-      targetUserId = targetUser.id;
+      targetUser = userResults[0];
 
-      // Auto-detect active session if targetSessionId not provided
-      if (!targetSessionId) {
-        const activeSessions = await db.select().from(sessions).where(eq(sessions.isActive, 'true')).orderBy(desc(sessions.startTime)).limit(1);
-        if (activeSessions.length > 0) {
-          targetSessionId = activeSessions[0].id;
-        } else {
-          return res.status(400).json({ error: 'No live session currently active. Please activate a session in Sessions & QR.' });
-        }
+      if (sessionResults.length === 0) {
+        return res.status(sessionId ? 404 : 400).json({
+          error: sessionId ? 'Target attendance session not found.' : 'No live session currently active. Please activate a session in Sessions & QR.',
+        });
       }
+      session = sessionResults[0];
     } else {
       return res.status(400).json({ error: 'Invalid scan payload. Provide valid QR token or Roll Number.' });
     }
-
-    // Verify Session
-    const foundSessions = await db.select().from(sessions).where(eq(sessions.id, targetSessionId)).limit(1);
-    if (foundSessions.length === 0) {
-      return res.status(404).json({ error: 'Target attendance session not found.' });
-    }
-
-    const session = foundSessions[0];
 
     // Check if session has been closed / ended
     if (session.isActive !== 'true') {
@@ -74,16 +81,9 @@ router.post('/scan', verifyToken, async (req: AuthenticatedRequest, res: Respons
       });
     }
 
-    // Verify User
-    const targetUserList = await db.select().from(users).where(eq(users.id, targetUserId)).limit(1);
-    if (targetUserList.length === 0) {
-      return res.status(404).json({ error: 'User record not found.' });
-    }
-    const targetUser = targetUserList[0];
-
-    // Check if already checked in
+    // Check if already checked in (lightweight check)
     const existingCheckin = await db
-      .select()
+      .select({ id: attendance.id, scannedAt: attendance.scannedAt, status: attendance.status })
       .from(attendance)
       .where(and(eq(attendance.sessionId, session.id), eq(attendance.userId, targetUser.id)))
       .limit(1);

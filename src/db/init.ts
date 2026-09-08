@@ -70,8 +70,19 @@ export async function initDb() {
       );
     `;
 
-    console.log('✅ Database schema tables ready with password column!');
+    // 5. Performance Indexes for instant QR scanning and check-ins
+    try {
+      await sql`CREATE INDEX IF NOT EXISTS idx_sessions_qr_code_token ON sessions(qr_code_token);`;
+      await sql`CREATE INDEX IF NOT EXISTS idx_sessions_is_active ON sessions(is_active);`;
+      await sql`CREATE INDEX IF NOT EXISTS idx_users_roll_number ON users(UPPER(roll_number));`;
+      await sql`CREATE INDEX IF NOT EXISTS idx_attendance_session_user ON attendance(session_id, user_id);`;
+    } catch (idxErr) {
+      console.warn('Index creation notice:', idxErr);
+    }
+
+    console.log('✅ Database schema tables ready with high-performance indexes!');
   } catch (error) {
     console.error('❌ DB Table Initialization Error:', error);
   }
 }
+

@@ -41,11 +41,11 @@ router.get('/', verifyToken, requireAdmin, async (req: AuthenticatedRequest, res
   }
 });
 
-// PUT / PATCH /api/users/:id/role (Admin update role, position, or team)
-const updateRoleHandler = async (req: AuthenticatedRequest, res: Response) => {
+// PUT / PATCH /api/users/:id and /api/users/:id/role (Admin update user details, role, position, team)
+const updateUserHandler = async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { id } = req.params;
-    const { role, position, teamId } = req.body;
+    const { role, position, teamId, name, email, rollNumber, password } = req.body;
 
     const existing = await db.select().from(users).where(eq(users.id, id)).limit(1);
 
@@ -55,16 +55,59 @@ const updateRoleHandler = async (req: AuthenticatedRequest, res: Response) => {
     if (role && (role === 'admin' || role === 'user')) updateFields.role = role;
     if (position !== undefined) updateFields.position = position.trim() || 'Member';
     if (teamId !== undefined) updateFields.teamId = teamId || null;
+    if (name !== undefined && name.trim()) updateFields.name = name.trim();
+    if (email !== undefined && email.trim()) updateFields.email = email.trim();
+    if (rollNumber !== undefined && rollNumber.trim()) updateFields.rollNumber = rollNumber.trim().toUpperCase();
+    if (password !== undefined && password.trim()) updateFields.password = password.trim();
 
     const [updatedUser] = await db.update(users).set(updateFields).where(eq(users.id, id)).returning();
 
-    return res.json({ message: 'User updated successfully', user: updatedUser });
+    // Fetch team info if assigned
+    let teamName = 'Unassigned';
+    let teamCode = 'N/A';
+    if (updatedUser.teamId) {
+      const [team] = await db.select().from(teams).where(eq(teams.id, updatedUser.teamId)).limit(1);
+      if (team) {
+        teamName = team.name;
+        teamCode = team.code;
+      }
+    }
+
+    return res.json({
+      message: 'User updated successfully',
+      user: {
+        ...updatedUser,
+        teamName,
+        teamCode,
+      },
+    });
   } catch (error: any) {
-    return res.status(500).json({ error: 'Failed to update user.' });
+    console.error('Error updating user:', error);
+    return res.status(500).json({ error: error.message || 'Failed to update user.' });
   }
 };
 
-router.put('/:id/role', verifyToken, requireAdmin, updateRoleHandler);
-router.patch('/:id/role', verifyToken, requireAdmin, updateRoleHandler);
+// DELETE /api/users/:id (Admin delete user)
+const deleteUserHandler = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+    const existing = await db.select().from(users).where(eq(users.id, id)).limit(1);
+    if (existing.length === 0) return res.status(404).json({ error: 'User not found.' });
+
+    await db.delete(users).where(eq(users.id, id));
+    return res.json({ message: 'User deleted successfully.' });
+  } catch (error: any) {
+    console.error('Error deleting user:', error);
+    return res.status(500).json({ error: 'Failed to delete user.' });
+  }
+};
+
+// Register for both standard REST (:id) and legacy role endpoint (:id/role)
+router.put('/:id', verifyToken, requireAdmin, updateUserHandler);
+router.patch('/:id', verifyToken, requireAdmin, updateUserHandler);
+router.put('/:id/role', verifyToken, requireAdmin, updateUserHandler);
+router.patch('/:id/role', verifyToken, requireAdmin, updateUserHandler);
+router.delete('/:id', verifyToken, requireAdmin, deleteUserHandler);
 
 export default router;
+
