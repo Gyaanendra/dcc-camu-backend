@@ -3,10 +3,28 @@ import { db } from '../db';
 import { users, teams } from '../db/schema';
 import { eq } from 'drizzle-orm';
 import jwt from 'jsonwebtoken';
-import { verifyToken, AuthenticatedRequest } from '../middleware/auth';
+import { verifyToken, AUTH_COOKIE_NAME, AuthenticatedRequest } from '../middleware/auth';
 
 const router = Router();
 const JWT_SECRET = process.env.JWT_SECRET || 'dcc_camu_super_secret_jwt_key_2026';
+
+// httpOnly cookie: JS can never read the token (XSS-safe).
+// SameSite=None + Secure in production (cross-site Vercel frontend/backend),
+// Lax without Secure for localhost dev (same-site, different ports).
+const isProd = process.env.NODE_ENV === 'production';
+const authCookieOptions = {
+  httpOnly: true,
+  secure: isProd,
+  sameSite: (isProd ? 'none' : 'lax') as 'none' | 'lax',
+  maxAge: 7 * 24 * 60 * 60 * 1000,
+  path: '/',
+};
+
+const issueSession = (res: Response, payload: object) => {
+  const token = jwt.sign(payload, JWT_SECRET, { expiresIn: '7d' });
+  res.cookie(AUTH_COOKIE_NAME, token, authCookieOptions);
+  return token;
+};
 
 // Bennett Email Pattern Regex
 const BENNETT_EMAIL_REGEX = /^[a-zA-Z0-9._%+-]+@bennett\.edu\.in$/i;
@@ -59,7 +77,7 @@ router.post('/login', async (req: Request, res: Response) => {
       rollNumber: user.rollNumber,
     };
 
-    const token = jwt.sign(payload, JWT_SECRET, { expiresIn: '7d' });
+    const token = issueSession(res, payload);
 
     return res.json({
       message: 'Login successful',
@@ -105,6 +123,16 @@ router.post('/register', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'An account with this roll number already exists.' });
     }
 
+    // Cross-check against the DB: never trust a client-supplied team id.
+    let validatedTeamId: string | null = null;
+    if (teamId && String(teamId).trim()) {
+      const foundTeam = await db.select().from(teams).where(eq(teams.id, String(teamId).trim())).limit(1);
+      if (foundTeam.length === 0) {
+        return res.status(400).json({ error: 'Assigned team not found.' });
+      }
+      validatedTeamId = foundTeam[0].id;
+    }
+
     // Default role is strictly 'user'. Save plain text password directly into 'password' column
     const [newUser] = await db
       .insert(users)
@@ -115,7 +143,7 @@ router.post('/register', async (req: Request, res: Response) => {
         rollNumber: rollNumber.trim(),
         position: position?.trim() || 'Member',
         role: 'user',
-        teamId: teamId || null,
+        teamId: validatedTeamId,
       })
       .returning();
 
@@ -129,7 +157,7 @@ router.post('/register', async (req: Request, res: Response) => {
       rollNumber: newUser.rollNumber,
     };
 
-    const token = jwt.sign(payload, JWT_SECRET, { expiresIn: '7d' });
+    const token = issueSession(res, payload);
 
     return res.status(201).json({
       message: 'Registration successful!',
@@ -140,6 +168,12 @@ router.post('/register', async (req: Request, res: Response) => {
     console.error('Registration error:', error);
     return res.status(500).json({ error: 'Internal server error during registration.' });
   }
+});
+
+// POST /api/auth/logout (clear the httpOnly session cookie)
+router.post('/logout', (req: Request, res: Response) => {
+  res.clearCookie(AUTH_COOKIE_NAME, { path: '/' });
+  return res.json({ message: 'Logged out successfully.' });
 });
 
 // GET /api/auth/me

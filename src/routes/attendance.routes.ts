@@ -2,7 +2,7 @@ import { Router, Response } from 'express';
 import { db } from '../db';
 import { attendance, sessions, users, teams } from '../db/schema';
 import { eq, and, desc, sql } from 'drizzle-orm';
-import { verifyToken, requireAdmin, requireViewer, blockAdvisor, AuthenticatedRequest } from '../middleware/auth';
+import { verifyToken, requireAdmin, requireViewer, blockAdvisor, isUuid, AuthenticatedRequest } from '../middleware/auth';
 
 const router = Router();
 
@@ -108,6 +108,9 @@ router.post('/scan', verifyToken, blockAdvisor, async (req: AuthenticatedRequest
     } else if (memberRollNumber && currentUser.role === 'admin') {
       // Case 2: Admin scanned or entered a Member's Roll Number
       const trimmedRoll = memberRollNumber.trim().toUpperCase();
+      if (sessionId && !isUuid(sessionId)) {
+        return res.status(400).json({ error: 'Invalid session id.' });
+      }
 
       // Parallelize target user lookup and session resolution
       const userPromise = db
@@ -210,6 +213,17 @@ router.post('/manual', verifyToken, requireAdmin, async (req: AuthenticatedReque
     if (!sessionId || !userId) {
       return res.status(400).json({ error: 'Session ID and User ID are required.' });
     }
+
+    // Cross-check both ids against the DB — never trust client-supplied ids.
+    if (!isUuid(sessionId) || !isUuid(userId)) {
+      return res.status(400).json({ error: 'Invalid Session ID or User ID.' });
+    }
+    const [targetSession, targetUser] = await Promise.all([
+      db.select({ id: sessions.id }).from(sessions).where(eq(sessions.id, sessionId)).limit(1),
+      db.select({ id: users.id }).from(users).where(eq(users.id, userId)).limit(1),
+    ]);
+    if (targetSession.length === 0) return res.status(404).json({ error: 'Target session not found.' });
+    if (targetUser.length === 0) return res.status(404).json({ error: 'Target member not found.' });
 
     if (action === 'mark_absent') {
       await db.delete(attendance).where(and(eq(attendance.sessionId, sessionId), eq(attendance.userId, userId)));

@@ -2,7 +2,7 @@ import { Router, Response } from 'express';
 import { db } from '../db';
 import { teams, users, attendance, sessions } from '../db/schema';
 import { eq, sql } from 'drizzle-orm';
-import { verifyToken, requireAdmin, AuthenticatedRequest } from '../middleware/auth';
+import { verifyToken, requireAdmin, isUuid, AuthenticatedRequest } from '../middleware/auth';
 
 const router = Router();
 
@@ -84,6 +84,7 @@ router.post('/', verifyToken, requireAdmin, async (req: AuthenticatedRequest, re
 router.get('/:id', verifyToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { id } = req.params;
+    if (!isUuid(id)) return res.status(400).json({ error: 'Invalid team id.' });
     const [team] = await db.select().from(teams).where(eq(teams.id, id)).limit(1);
     if (!team) return res.status(404).json({ error: 'Team not found.' });
 
@@ -99,6 +100,7 @@ router.get('/:id', verifyToken, async (req: AuthenticatedRequest, res: Response)
 const updateTeamHandler = async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { id } = req.params;
+    if (!isUuid(id)) return res.status(400).json({ error: 'Invalid team id.' });
     const { name, code, description, color } = req.body;
 
     const existing = await db.select().from(teams).where(eq(teams.id, id)).limit(1);
@@ -125,6 +127,7 @@ router.patch('/:id', verifyToken, requireAdmin, updateTeamHandler);
 router.delete('/:id', verifyToken, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { id } = req.params;
+    if (!isUuid(id)) return res.status(400).json({ error: 'Invalid team id.' });
     const existing = await db.select().from(teams).where(eq(teams.id, id)).limit(1);
     if (existing.length === 0) return res.status(404).json({ error: 'Team not found.' });
 

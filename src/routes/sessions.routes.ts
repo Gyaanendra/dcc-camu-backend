@@ -2,7 +2,7 @@ import { Router, Response } from 'express';
 import { db } from '../db';
 import { sessions, users, teams, attendance } from '../db/schema';
 import { eq, desc } from 'drizzle-orm';
-import { verifyToken, requireAdmin, AuthenticatedRequest } from '../middleware/auth';
+import { verifyToken, requireAdmin, isUuid, AuthenticatedRequest } from '../middleware/auth';
 
 const router = Router();
 
@@ -41,6 +41,7 @@ router.get('/', verifyToken, async (req: AuthenticatedRequest, res: Response) =>
 router.get('/:id', verifyToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { id } = req.params;
+    if (!isUuid(id)) return res.status(400).json({ error: 'Invalid session id.' });
     const found = await db.select().from(sessions).where(eq(sessions.id, id)).limit(1);
 
     if (found.length === 0) return res.status(404).json({ error: 'Session not found.' });
@@ -85,8 +86,22 @@ router.post('/', verifyToken, requireAdmin, async (req: AuthenticatedRequest, re
     }
 
     const duration = durationMinutes ? parseInt(durationMinutes, 10) : 120; // default 2 hours
+    if (!Number.isFinite(duration) || duration < 5 || duration > 1440) {
+      return res.status(400).json({ error: 'Duration must be between 5 and 1440 minutes.' });
+    }
     const startTime = new Date();
     const endTime = new Date(startTime.getTime() + duration * 60 * 1000);
+
+    // Cross-check team assignment against the DB — never trust a client id.
+    let validatedTeamId: string | null = null;
+    if (teamId && String(teamId).trim()) {
+      if (!isUuid(String(teamId).trim())) return res.status(400).json({ error: 'Invalid team id.' });
+      const foundTeam = await db.select().from(teams).where(eq(teams.id, String(teamId).trim())).limit(1);
+      if (foundTeam.length === 0) {
+        return res.status(400).json({ error: 'Assigned team not found.' });
+      }
+      validatedTeamId = foundTeam[0].id;
+    }
 
     // Generate unique QR code payload token
     const randomHex = Math.random().toString(36).substring(2, 10).toUpperCase();
@@ -98,7 +113,7 @@ router.post('/', verifyToken, requireAdmin, async (req: AuthenticatedRequest, re
         title: title.trim(),
         type: type || 'regular',
         description: description || '',
-        teamId: teamId || null,
+        teamId: validatedTeamId,
         qrCodeToken,
         location: location || 'DCC Auditorium',
         createdById: req.user!.id,
@@ -124,6 +139,7 @@ router.post('/', verifyToken, requireAdmin, async (req: AuthenticatedRequest, re
 router.patch('/:id/status', verifyToken, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { id } = req.params;
+    if (!isUuid(id)) return res.status(400).json({ error: 'Invalid session id.' });
     const { isActive } = req.body;
 
     const statusValue = isActive === true || isActive === 'true' ? 'true' : 'false';
@@ -154,6 +170,7 @@ router.patch('/:id/status', verifyToken, requireAdmin, async (req: Authenticated
 router.get('/:id/qr', verifyToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { id } = req.params;
+    if (!isUuid(id)) return res.status(400).json({ error: 'Invalid session id.' });
     const found = await db.select().from(sessions).where(eq(sessions.id, id)).limit(1);
 
     if (found.length === 0) return res.status(404).json({ error: 'Session not found.' });

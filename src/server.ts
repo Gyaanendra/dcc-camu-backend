@@ -15,15 +15,81 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+app.disable('x-powered-by');
+app.set('trust proxy', 1); // Correct client IPs behind Vercel/reverse proxies
+
+// Minimal security headers (no extra dependency)
+app.use((req: Request, res: Response, next: NextFunction) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  next();
+});
+
+// Cookie parser (httpOnly auth cookie). No dependency needed.
+app.use((req: Request, res: Response, next: NextFunction) => {
+  const header = req.headers.cookie;
+  const cookies: Record<string, string> = {};
+  if (header) {
+    for (const part of header.split(';')) {
+      const idx = part.indexOf('=');
+      if (idx > 0) {
+        try {
+          cookies[part.slice(0, idx).trim()] = decodeURIComponent(part.slice(idx + 1).trim());
+        } catch {
+          // Ignore malformed cookie segments
+        }
+      }
+    }
+  }
+  (req as any).cookies = cookies;
+  next();
+});
+
+// CORS must list explicit origins when cookies/credentials are used.
+// Set FRONTEND_URL in .env (comma-separated) to lock this down in production.
+const allowedOrigins = (process.env.FRONTEND_URL || '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+
 // Enable CORS for Next.js frontend
 app.use(
   cors({
-    origin: '*',
+    origin: allowedOrigins.length > 0 ? allowedOrigins : true,
     credentials: true,
   })
 );
 
-app.use(express.json());
+app.use(express.json({ limit: '100kb' }));
+
+// In-memory login/register rate limit: 30 attempts per IP per 10 minutes.
+// (Per-instance memory: fine for single-server dev; use Redis/Upstash for multi-instance prod.)
+const authAttempts = new Map<string, { count: number; resetAt: number }>();
+const AUTH_WINDOW_MS = 10 * 60 * 1000;
+const AUTH_MAX_ATTEMPTS = 30;
+app.use('/api/auth', (req: Request, res: Response, next: NextFunction) => {
+  if (req.method !== 'POST') return next();
+  const now = Date.now();
+  const key = req.ip || 'unknown';
+  const entry = authAttempts.get(key);
+  if (!entry || now > entry.resetAt) {
+    authAttempts.set(key, { count: 1, resetAt: now + AUTH_WINDOW_MS });
+    return next();
+  }
+  entry.count += 1;
+  if (entry.count > AUTH_MAX_ATTEMPTS) {
+    return res.status(429).json({ error: 'Too many attempts. Please wait a few minutes and retry.' });
+  }
+  // Opportunistic cleanup
+  if (authAttempts.size > 5000) {
+    for (const [k, v] of authAttempts) {
+      if (now > v.resetAt) authAttempts.delete(k);
+    }
+  }
+  next();
+});
 
 // Comprehensive Request Logger Middleware
 app.use((req: Request, res: Response, next: NextFunction) => {
@@ -81,6 +147,13 @@ app.use('/api/users', usersRoutes);
 
 // Error handling middleware
 app.use((err: any, req: Request, res: Response, next: NextFunction) => {
+  // Malformed JSON bodies are a client error, not a server crash.
+  if (err?.type === 'entity.parse.failed') {
+    return res.status(400).json({ error: 'Invalid JSON body.' });
+  }
+  if (err?.type === 'entity.too.large') {
+    return res.status(413).json({ error: 'Request body too large.' });
+  }
   console.error('❌ [Unhandled Server Error]:', err);
   res.status(500).json({ error: 'Internal Server Error', message: err.message });
 });

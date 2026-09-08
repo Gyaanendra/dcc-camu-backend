@@ -2,7 +2,7 @@ import { Router, Response } from 'express';
 import { db } from '../db';
 import { users, teams, attendance } from '../db/schema';
 import { eq } from 'drizzle-orm';
-import { verifyToken, requireAdmin, requireViewer, AuthenticatedRequest } from '../middleware/auth';
+import { verifyToken, requireAdmin, requireViewer, isUuid, AuthenticatedRequest } from '../middleware/auth';
 
 const router = Router();
 
@@ -129,6 +129,7 @@ router.get('/', verifyToken, requireViewer, async (req: AuthenticatedRequest, re
 const updateUserHandler = async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { id } = req.params;
+    if (!isUuid(id)) return res.status(400).json({ error: 'Invalid user id.' });
     const { role, position, teamId, name, email, rollNumber, password } = req.body;
 
     const existing = await db.select().from(users).where(eq(users.id, id)).limit(1);
@@ -138,7 +139,17 @@ const updateUserHandler = async (req: AuthenticatedRequest, res: Response) => {
     const updateFields: any = {};
     if (role && (role === 'admin' || role === 'advisor' || role === 'user')) updateFields.role = role;
     if (position !== undefined) updateFields.position = position.trim() || 'Member';
-    if (teamId !== undefined) updateFields.teamId = teamId || null;
+    // Cross-check team assignment against the DB — never trust a client id.
+    if (teamId !== undefined) {
+      if (teamId) {
+        if (!isUuid(teamId)) return res.status(400).json({ error: 'Invalid team id.' });
+        const foundTeam = await db.select().from(teams).where(eq(teams.id, teamId)).limit(1);
+        if (foundTeam.length === 0) return res.status(400).json({ error: 'Assigned team not found.' });
+        updateFields.teamId = foundTeam[0].id;
+      } else {
+        updateFields.teamId = null;
+      }
+    }
     if (name !== undefined && name.trim()) updateFields.name = name.trim();
     if (email !== undefined && email.trim()) updateFields.email = email.trim();
     if (rollNumber !== undefined && rollNumber.trim()) updateFields.rollNumber = rollNumber.trim().toUpperCase();
@@ -175,6 +186,7 @@ const updateUserHandler = async (req: AuthenticatedRequest, res: Response) => {
 const deleteUserHandler = async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { id } = req.params;
+    if (!isUuid(id)) return res.status(400).json({ error: 'Invalid user id.' });
     const existing = await db.select().from(users).where(eq(users.id, id)).limit(1);
     if (existing.length === 0) return res.status(404).json({ error: 'User not found.' });
 
