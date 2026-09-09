@@ -390,5 +390,6 @@ const getAdminAnalyticsHandler = async (req: AuthenticatedRequest, res: Response
 
 router.get('/analytics', verifyToken, requireViewer, getAdminAnalyticsHandler);
 router.get('/admin-analytics', verifyToken, requireViewer, getAdminAnalyticsHandler);
+router.get('/admin_analytics', verifyToken, requireViewer, getAdminAnalyticsHandler);
 
 export default router;

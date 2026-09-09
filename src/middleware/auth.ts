@@ -35,11 +35,19 @@ export const verifyToken = async (req: AuthenticatedRequest, res: Response, next
   }
 
   let payload: { id: string };
+  const isProd = process.env.NODE_ENV === 'production' || Boolean(process.env.VERCEL);
+  const clearCookieOpts = {
+    path: '/',
+    httpOnly: true,
+    secure: isProd,
+    sameSite: (isProd ? 'none' : 'lax') as 'none' | 'lax',
+  };
+
   try {
     payload = jwt.verify(token, JWT_SECRET) as { id: string };
   } catch (err) {
     // Stale/invalid cookie must not linger and retry forever.
-    res.clearCookie(AUTH_COOKIE_NAME, { path: '/' });
+    res.clearCookie(AUTH_COOKIE_NAME, clearCookieOpts);
     return res.status(401).json({ error: 'Invalid or expired authentication token.' });
   }
 
@@ -50,7 +58,7 @@ export const verifyToken = async (req: AuthenticatedRequest, res: Response, next
   try {
     const found = await db.select().from(users).where(eq(users.id, payload.id)).limit(1);
     if (found.length === 0) {
-      res.clearCookie(AUTH_COOKIE_NAME, { path: '/' });
+      res.clearCookie(AUTH_COOKIE_NAME, clearCookieOpts);
       return res.status(401).json({ error: 'Account no longer exists.' });
     }
     const u = found[0];

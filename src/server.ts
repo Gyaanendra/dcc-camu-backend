@@ -60,6 +60,12 @@ const extraOrigins = (process.env.FRONTEND_URL || '')
   .map((s) => s.trim())
   .filter(Boolean);
 const allowedOrigins = new Set([...defaultOrigins, ...extraOrigins]);
+const isAllowedOrigin = (origin: string): boolean => {
+  if (allowedOrigins.has(origin)) return true;
+  // Match any Vercel preview/branch deployment for dcc-camu-frontend
+  if (/^https:\/\/dcc-camu-frontend(-[a-z0-9-]+)?\.vercel\.app$/i.test(origin)) return true;
+  return false;
+};
 
 // Enable CORS for Next.js frontend
 app.use(
@@ -67,11 +73,12 @@ app.use(
     origin: (origin, callback) => {
       // No Origin header (curl, mobile apps, same-origin): allow through.
       if (!origin) return callback(null, true);
-      if (allowedOrigins.has(origin)) return callback(null, true);
+      if (isAllowedOrigin(origin)) return callback(null, true);
       // Unknown origins get NO CORS headers -> browser blocks the read.
       return callback(null, false);
     },
     credentials: true,
+    maxAge: 86400,
   })
 );
 
@@ -101,32 +108,6 @@ app.use('/api/auth', (req: Request, res: Response, next: NextFunction) => {
       if (now > v.resetAt) authAttempts.delete(k);
     }
   }
-  next();
-});
-
-// Comprehensive Request Logger Middleware
-app.use((req: Request, res: Response, next: NextFunction) => {
-  const start = Date.now();
-  const { method, originalUrl, ip } = req;
-
-  res.on('finish', () => {
-    const duration = Date.now() - start;
-    const statusCode = res.statusCode;
-    const statusColor =
-      statusCode >= 500
-        ? '🔴'
-        : statusCode >= 400
-        ? '🟡'
-        : statusCode >= 300
-        ? '🔵'
-        : '🟢';
-
-    const timestamp = new Date().toLocaleTimeString();
-    console.log(
-      `[${timestamp}] ${statusColor} ${method} ${originalUrl} -> ${statusCode} (${duration}ms)`
-    );
-  });
-
   next();
 });
 

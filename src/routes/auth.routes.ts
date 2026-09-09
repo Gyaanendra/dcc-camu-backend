@@ -11,8 +11,8 @@ const JWT_SECRET = process.env.JWT_SECRET || 'dcc_camu_super_secret_jwt_key_2026
 // httpOnly cookie: JS can never read the token (XSS-safe).
 // SameSite=None + Secure in production (cross-site Vercel frontend/backend),
 // Lax without Secure for localhost dev (same-site, different ports).
-const isProd = process.env.NODE_ENV === 'production';
-const authCookieOptions = {
+const isProd = process.env.NODE_ENV === 'production' || Boolean(process.env.VERCEL);
+export const authCookieOptions = {
   httpOnly: true,
   secure: isProd,
   sameSite: (isProd ? 'none' : 'lax') as 'none' | 'lax',
@@ -172,7 +172,12 @@ router.post('/register', async (req: Request, res: Response) => {
 
 // POST /api/auth/logout (clear the httpOnly session cookie)
 router.post('/logout', (req: Request, res: Response) => {
-  res.clearCookie(AUTH_COOKIE_NAME, { path: '/' });
+  res.clearCookie(AUTH_COOKIE_NAME, {
+    path: '/',
+    httpOnly: true,
+    secure: isProd,
+    sameSite: isProd ? 'none' : 'lax',
+  });
   return res.json({ message: 'Logged out successfully.' });
 });
 
