@@ -1,8 +1,6 @@
 import { sql } from './index';
 
 export async function initDb() {
-  console.log('🔄 Verifying Neon PostgreSQL database tables...');
-
   try {
     // 1. Create Teams Table
     await sql`
@@ -77,10 +75,9 @@ export async function initDb() {
       await sql`CREATE INDEX IF NOT EXISTS idx_users_roll_number ON users(UPPER(roll_number));`;
       await sql`CREATE INDEX IF NOT EXISTS idx_attendance_session_user ON attendance(session_id, user_id);`;
     } catch (idxErr) {
-      console.warn('Index creation notice:', idxErr);
+      // Indexes are best-effort; core tables are already ready.
     }
 
-    console.log('✅ Database schema tables ready with high-performance indexes!');
   } catch (error) {
     console.error('❌ DB Table Initialization Error:', error);
   }

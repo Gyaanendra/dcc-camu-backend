@@ -154,14 +154,10 @@ app.use((err: any, req: Request, res: Response, next: NextFunction) => {
 
 // Run DB table initialization & seed on startup, then start HTTP server
 initDb().then(() => {
-  app.listen(Number(PORT), '0.0.0.0', () => {
-    console.log(`🚀 Club DCC Camu Backend Server running on port ${PORT} (0.0.0.0)`);
-  });
+  app.listen(Number(PORT), '0.0.0.0');
 }).catch((err) => {
   console.error('Failed to initialize database on startup:', err);
-  app.listen(Number(PORT), '0.0.0.0', () => {
-    console.log(`🚀 Club DCC Camu Backend Server running on port ${PORT} (0.0.0.0)`);
-  });
+  app.listen(Number(PORT), '0.0.0.0');
 });
 
 export default app;

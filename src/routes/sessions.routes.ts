@@ -123,8 +123,6 @@ router.post('/', verifyToken, requireAdmin, async (req: AuthenticatedRequest, re
       })
       .returning();
 
-    console.log(`[Sessions Route] Admin ${req.user!.email} created live session: "${newSession.title}" (${newSession.id})`);
-
     return res.status(201).json({
       message: 'Session created successfully',
       session: newSession,
@@ -153,8 +151,6 @@ router.patch('/:id/status', verifyToken, requireAdmin, async (req: Authenticated
     if (!updatedSession) {
       return res.status(404).json({ error: 'Session not found' });
     }
-
-    console.log(`[Sessions Route] Admin ${req.user!.email} updated session ${id} status to: ${statusValue === 'true' ? 'LIVE' : 'CLOSED'}`);
 
     return res.json({
       message: statusValue === 'true' ? 'Session QR re-opened' : 'Live Session QR ended and closed successfully',
