@@ -4,6 +4,7 @@ import { users, teams } from '../db/schema';
 import { eq } from 'drizzle-orm';
 import jwt from 'jsonwebtoken';
 import { verifyToken, AUTH_COOKIE_NAME, AuthenticatedRequest } from '../middleware/auth';
+import { generateNotionistAvatar } from '../utils/avatar';
 
 const router = Router();
 const JWT_SECRET = process.env.JWT_SECRET || 'dcc_camu_super_secret_jwt_key_2026';
@@ -134,6 +135,8 @@ router.post('/register', async (req: Request, res: Response) => {
     }
 
     // Default role is strictly 'user'. Save plain text password directly into 'password' column
+    const assignedAvatarUrl = generateNotionistAvatar(rollNumber.trim() || name.trim());
+
     const [newUser] = await db
       .insert(users)
       .values({
@@ -144,6 +147,7 @@ router.post('/register', async (req: Request, res: Response) => {
         position: position?.trim() || 'Member',
         role: 'user',
         teamId: validatedTeamId,
+        avatarUrl: assignedAvatarUrl,
       })
       .returning();
 

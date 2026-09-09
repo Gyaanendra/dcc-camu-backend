@@ -47,6 +47,7 @@ router.get('/sheet', verifyToken, requireViewer, async (req: AuthenticatedReques
           teamId: u.teamId,
           teamName: team ? team.name : 'Unassigned',
           teamCode: team ? team.code : 'N/A',
+          avatarUrl: u.avatarUrl,
           attended,
           attendanceRate: allSessions.length > 0 ? Math.round((attended / allSessions.length) * 100) : 0,
           records,
@@ -63,7 +64,10 @@ router.get('/sheet', verifyToken, requireViewer, async (req: AuthenticatedReques
       sessions: sessionList,
       members,
       summary: {
-        totalMembers: allUsers.length,
+        totalMembers: allUsers.filter(u => u.role === 'user').length,
+        totalAdmins: allUsers.filter(u => u.role === 'admin').length,
+        totalAdvisors: allUsers.filter(u => u.role === 'advisor').length,
+        totalUsers: allUsers.length,
         totalSessions: allSessions.length,
         totalRecords: allAttendance.length,
       },
@@ -194,6 +198,7 @@ router.post('/scan', verifyToken, blockAdvisor, async (req: AuthenticatedRequest
         id: targetUser.id,
         name: targetUser.name,
         rollNumber: targetUser.rollNumber,
+        avatarUrl: targetUser.avatarUrl,
       },
       session: {
         id: session.id,
@@ -317,7 +322,12 @@ const getAdminAnalyticsHandler = async (req: AuthenticatedRequest, res: Response
     const allAttendance = await db.select().from(attendance);
 
     const memberUsers = allUsers.filter(u => u.role === 'user');
+    const adminUsers = allUsers.filter(u => u.role === 'admin');
+    const advisorUsers = allUsers.filter(u => u.role === 'advisor');
     const totalMembers = memberUsers.length;
+    const totalAdmins = adminUsers.length;
+    const totalAdvisors = advisorUsers.length;
+    const totalUsers = allUsers.length;
     const totalSessions = allSessions.length;
     const totalPossibleAttendance = totalMembers * (totalSessions || 1);
     const totalPresentRecords = allAttendance.length;
@@ -368,6 +378,7 @@ const getAdminAnalyticsHandler = async (req: AuthenticatedRequest, res: Response
         rollNumber: member.rollNumber,
         teamName: team ? team.name : 'Unassigned',
         teamCode: team ? team.code : 'N/A',
+        avatarUrl: member.avatarUrl,
         attendedSessions: attended,
         totalSessions,
         attendancePercentage: rate,
@@ -378,6 +389,9 @@ const getAdminAnalyticsHandler = async (req: AuthenticatedRequest, res: Response
     return res.json({
       summary: {
         totalMembers,
+        totalAdmins,
+        totalAdvisors,
+        totalUsers,
         totalSessions,
         totalAttendanceRecords: totalPresentRecords,
         overallAttendanceRate,

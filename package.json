@@ -11,6 +11,7 @@
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
     "db:seed": "tsx src/db/seed.ts",
+    "db:avatars": "tsx src/scripts/assign-avatars.ts",
     "db:studio": "drizzle-kit studio"
   },
   "dependencies": {

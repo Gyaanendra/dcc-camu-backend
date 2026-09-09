@@ -1,8 +1,9 @@
 import { Router, Response } from 'express';
 import { db } from '../db';
 import { users, teams, attendance } from '../db/schema';
-import { eq } from 'drizzle-orm';
+import { eq, isNull } from 'drizzle-orm';
 import { verifyToken, requireAdmin, requireViewer, isUuid, AuthenticatedRequest } from '../middleware/auth';
+import { generateNotionistAvatar } from '../utils/avatar';
 
 const router = Router();
 
@@ -12,7 +13,7 @@ const BENNETT_EMAIL_REGEX = /^[a-zA-Z0-9._%+-]+@bennett\.edu\.in$/i;
 // POST /api/users (Admin: Create a new member directly)
 router.post('/', verifyToken, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const { name, email, password, rollNumber, position, teamId, role } = req.body;
+    const { name, email, password, rollNumber, position, teamId, role, avatarUrl } = req.body;
 
     if (!name || !email || !password || !rollNumber) {
       return res.status(400).json({ error: 'Name, email, password, and roll number are required.' });
@@ -52,6 +53,11 @@ router.post('/', verifyToken, requireAdmin, async (req: AuthenticatedRequest, re
     // 'advisor' is a read-only role: can view dashboards/directories/sheets, cannot mutate anything.
     const assignedRole = role === 'admin' || role === 'advisor' ? role : 'user';
 
+    // Assign custom avatarUrl or generate a random funky Notionist avatar automatically
+    const assignedAvatarUrl = avatarUrl && typeof avatarUrl === 'string' && avatarUrl.trim()
+      ? avatarUrl.trim()
+      : generateNotionistAvatar(trimmedRoll || name.trim());
+
     const [newUser] = await db
       .insert(users)
       .values({
@@ -62,6 +68,7 @@ router.post('/', verifyToken, requireAdmin, async (req: AuthenticatedRequest, re
         position: position?.trim() || 'Member',
         role: assignedRole,
         teamId: validatedTeamId,
+        avatarUrl: assignedAvatarUrl,
       })
       .returning();
 
@@ -130,7 +137,7 @@ const updateUserHandler = async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { id } = req.params;
     if (!isUuid(id)) return res.status(400).json({ error: 'Invalid user id.' });
-    const { role, position, teamId, name, email, rollNumber, password } = req.body;
+    const { role, position, teamId, name, email, rollNumber, password, avatarUrl } = req.body;
 
     const existing = await db.select().from(users).where(eq(users.id, id)).limit(1);
 
@@ -154,6 +161,7 @@ const updateUserHandler = async (req: AuthenticatedRequest, res: Response) => {
     if (email !== undefined && email.trim()) updateFields.email = email.trim();
     if (rollNumber !== undefined && rollNumber.trim()) updateFields.rollNumber = rollNumber.trim().toUpperCase();
     if (password !== undefined && password.trim()) updateFields.password = password.trim();
+    if (avatarUrl !== undefined) updateFields.avatarUrl = avatarUrl ? String(avatarUrl).trim() : null;
 
     const [updatedUser] = await db.update(users).set(updateFields).where(eq(users.id, id)).returning();
 
@@ -197,6 +205,67 @@ const deleteUserHandler = async (req: AuthenticatedRequest, res: Response) => {
     return res.status(500).json({ error: 'Failed to delete user.' });
   }
 };
+
+// POST /api/users/randomize-avatars (Admin: bulk assign or refresh Notionist avatars)
+router.post('/randomize-avatars', verifyToken, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { forceAll = false } = req.body;
+
+    const query = forceAll
+      ? db.select().from(users)
+      : db.select().from(users).where(isNull(users.avatarUrl));
+
+    const targetUsers = await query;
+
+    if (targetUsers.length === 0) {
+      return res.json({ message: 'All members already have avatars assigned.', count: 0 });
+    }
+
+    let updatedCount = 0;
+    for (const u of targetUsers) {
+      const newAvatarUrl = generateNotionistAvatar(u.rollNumber || u.name);
+      await db.update(users).set({ avatarUrl: newAvatarUrl }).where(eq(users.id, u.id));
+      updatedCount++;
+    }
+
+    return res.json({
+      message: `Successfully assigned Notionist avatars to ${updatedCount} member(s).`,
+      count: updatedCount,
+    });
+  } catch (error: any) {
+    console.error('Error randomizing avatars:', error);
+    return res.status(500).json({ error: error.message || 'Failed to randomize avatars.' });
+  }
+});
+
+// POST /api/users/:id/reroll-avatar (Admin: re-roll a single member's Notionist avatar)
+router.post('/:id/reroll-avatar', verifyToken, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+    if (!isUuid(id)) return res.status(400).json({ error: 'Invalid user id.' });
+
+    const existing = await db.select().from(users).where(eq(users.id, id)).limit(1);
+    if (existing.length === 0) return res.status(404).json({ error: 'User not found.' });
+
+    const user = existing[0];
+    const { gender } = req.body;
+    const newAvatarUrl = generateNotionistAvatar(user.rollNumber || user.name, gender);
+
+    const [updated] = await db
+      .update(users)
+      .set({ avatarUrl: newAvatarUrl })
+      .where(eq(users.id, id))
+      .returning();
+
+    return res.json({
+      message: 'Avatar re-rolled successfully.',
+      avatarUrl: updated.avatarUrl,
+    });
+  } catch (error: any) {
+    console.error('Error re-rolling avatar:', error);
+    return res.status(500).json({ error: error.message || 'Failed to re-roll avatar.' });
+  }
+});
 
 // Register for both standard REST (:id) and legacy role endpoint (:id/role)
 router.put('/:id', verifyToken, requireAdmin, updateUserHandler);

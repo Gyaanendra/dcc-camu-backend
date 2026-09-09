@@ -78,6 +78,23 @@ export async function initDb() {
       // Indexes are best-effort; core tables are already ready.
     }
 
+    // 6. Automatically backfill gender-matched Notionist avatars for any users with avatar_url IS NULL
+    try {
+      const usersWithoutAvatar = await sql`SELECT id, name, roll_number FROM users WHERE avatar_url IS NULL`;
+      if (usersWithoutAvatar.length > 0) {
+        console.log(`⚡ Auto-assigning gender-matched Notionist avatars to ${usersWithoutAvatar.length} member(s)...`);
+        // Dynamic import to avoid circular dependency
+        const { generateNotionistAvatar } = await import('../utils/avatar');
+        for (const u of usersWithoutAvatar) {
+          const newAvatar = generateNotionistAvatar(u.name || u.roll_number);
+          await sql`UPDATE users SET avatar_url = ${newAvatar} WHERE id = ${u.id}`;
+        }
+        console.log(`✅ Completed auto-assignment for ${usersWithoutAvatar.length} member(s).`);
+      }
+    } catch (avatarErr) {
+      console.error('Avatar backfill error in initDb:', avatarErr);
+    }
+
   } catch (error) {
     console.error('❌ DB Table Initialization Error:', error);
   }
