@@ -167,9 +167,11 @@ router.post('/scan', verifyToken, blockAdvisor, async (req: AuthenticatedRequest
       });
     }
 
-    // Determine status (Punctual vs Late)
+    // Determine status (Punctual vs Late). Legacy rows may lack startTime —
+    // treat those as on-time instead of crashing on `.getTime()`.
     const now = new Date();
-    const isLate = now > new Date(session.startTime.getTime() + 15 * 60 * 1000); // > 15 mins late
+    const sessionStart = session.startTime ? new Date(session.startTime) : now;
+    const isLate = now > new Date(sessionStart.getTime() + 15 * 60 * 1000); // > 15 mins late
     const status = isLate ? 'late' : 'present';
 
     // Insert attendance record
