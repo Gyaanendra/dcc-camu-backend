@@ -252,8 +252,8 @@ router.post('/manual', verifyToken, requireAdmin, async (req: AuthenticatedReque
   }
 });
 
-// GET /api/attendance/my-stats (User: Personal Attendance Analytics)
-router.get('/my-stats', verifyToken, async (req: AuthenticatedRequest, res: Response) => {
+// GET /api/attendance/my-stats (aka /my_stats) — User: Personal Attendance Analytics
+const getMyStatsHandler = async (req: AuthenticatedRequest, res: Response) => {
   try {
     const userId = req.user!.id;
     const allSessions = await db.select().from(sessions);
@@ -301,7 +301,10 @@ router.get('/my-stats', verifyToken, async (req: AuthenticatedRequest, res: Resp
   } catch (error: any) {
     return res.status(500).json({ error: 'Failed to fetch personal stats.' });
   }
-});
+};
+
+router.get('/my-stats', verifyToken, getMyStatsHandler);
+router.get('/my_stats', verifyToken, getMyStatsHandler);
 
 // GET /api/attendance/analytics or /api/attendance/admin-analytics (Admin: Comprehensive Analytics Engine)
 const getAdminAnalyticsHandler = async (req: AuthenticatedRequest, res: Response) => {

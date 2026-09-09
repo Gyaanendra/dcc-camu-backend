@@ -25,10 +25,12 @@ export const AUTH_COOKIE_NAME = 'dcc_token';
 // Every request reloads name/role/position/team from the users table so
 // role changes and deletions take effect immediately, even with old tokens.
 export const verifyToken = async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  // Bearer token is primary — it survives cross-site cookie blocking. The
+  // cookie is only a fallback for clients that rely on it.
   const authHeader = req.headers.authorization;
   const bearer = authHeader && authHeader.startsWith('Bearer ') ? authHeader.split(' ')[1] : null;
   const cookieToken = (req as unknown as { cookies?: Record<string, string> }).cookies?.[AUTH_COOKIE_NAME];
-  const token = cookieToken || bearer;
+  const token = bearer || cookieToken;
 
   if (!token) {
     return res.status(401).json({ error: 'Authentication required. No token provided.' });

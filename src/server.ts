@@ -17,6 +17,11 @@ const PORT = process.env.PORT || 5000;
 
 app.disable('x-powered-by');
 app.set('trust proxy', 1); // Correct client IPs behind Vercel/reverse proxies
+// Express's default ETags turn cached GETs into 304 Not Modified responses,
+// and Vercel/browser-cached 304s can strip or mismatch CORS headers, which
+// crashes credentialed fetches. ETags off + the no-store headers below keep
+// every API response fresh and complete.
+app.set('etag', false);
 
 // Minimal security headers (no extra dependency)
 app.use((req: Request, res: Response, next: NextFunction) => {
@@ -67,22 +72,35 @@ const isAllowedOrigin = (origin: string): boolean => {
   return false;
 };
 
-// Enable CORS for Next.js frontend
-app.use(
-  cors({
-    origin: (origin, callback) => {
-      // No Origin header (curl, mobile apps, same-origin): allow through.
-      if (!origin) return callback(null, true);
-      if (isAllowedOrigin(origin)) return callback(null, true);
-      // Unknown origins get NO CORS headers -> browser blocks the read.
-      return callback(null, false);
-    },
-    credentials: true,
-    maxAge: 86400,
-  })
-);
+// Enable CORS for Next.js frontend. Preflights are answered explicitly with
+// the same options so OPTIONS requests never fall through without headers.
+const corsOptions = {
+  origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
+    // No Origin header (curl, mobile apps, same-origin): allow through.
+    if (!origin) return callback(null, true);
+    if (isAllowedOrigin(origin)) return callback(null, true);
+    // Unknown origins get NO CORS headers -> browser blocks the read.
+    return callback(null, false);
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Cookie'],
+  maxAge: 86400,
+};
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
 
 app.use(express.json({ limit: '100kb' }));
+
+// All API responses must bypass every cache layer (browser, Vercel edge,
+// proxies). A cached 304 would carry stale/missing CORS headers and kill
+// credentialed fetches on the client.
+app.use('/api', (req: Request, res: Response, next: NextFunction) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  next();
+});
 
 // In-memory login/register rate limit: 30 attempts per IP per 10 minutes.
 // (Per-instance memory: fine for single-server dev; use Redis/Upstash for multi-instance prod.)
