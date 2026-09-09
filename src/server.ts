@@ -47,17 +47,30 @@ app.use((req: Request, res: Response, next: NextFunction) => {
   next();
 });
 
-// CORS must list explicit origins when cookies/credentials are used.
-// Set FRONTEND_URL in .env (comma-separated) to lock this down in production.
-const allowedOrigins = (process.env.FRONTEND_URL || '')
+// CORS: cookies (`credentials: include`) forbid the '*' wildcard, so the
+// backend must echo back an explicit, allowlisted origin + credentials.
+// Defaults cover production and local dev with zero env setup; FRONTEND_URL
+// (comma-separated) adds future custom domains without a code change.
+const defaultOrigins = [
+  'https://dcc-camu-frontend.vercel.app',
+  'http://localhost:3000',
+];
+const extraOrigins = (process.env.FRONTEND_URL || '')
   .split(',')
   .map((s) => s.trim())
   .filter(Boolean);
+const allowedOrigins = new Set([...defaultOrigins, ...extraOrigins]);
 
 // Enable CORS for Next.js frontend
 app.use(
   cors({
-    origin: allowedOrigins.length > 0 ? allowedOrigins : true,
+    origin: (origin, callback) => {
+      // No Origin header (curl, mobile apps, same-origin): allow through.
+      if (!origin) return callback(null, true);
+      if (allowedOrigins.has(origin)) return callback(null, true);
+      // Unknown origins get NO CORS headers -> browser blocks the read.
+      return callback(null, false);
+    },
     credentials: true,
   })
 );
