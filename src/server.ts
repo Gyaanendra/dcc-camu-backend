@@ -170,12 +170,25 @@ app.use((err: any, req: Request, res: Response, next: NextFunction) => {
   res.status(500).json({ error: 'Internal Server Error', message: err.message });
 });
 
-// Run DB table initialization & seed on startup, then start HTTP server
-initDb().then(() => {
-  app.listen(Number(PORT), '0.0.0.0');
-}).catch((err) => {
-  console.error('Failed to initialize database on startup:', err);
-  app.listen(Number(PORT), '0.0.0.0');
-});
+// In serverless environments (e.g. Vercel), tables and indexes already exist.
+// Running heavy sequential DDL on every cold start causes severe multi-second latency.
+// Only run initDb during local development or when explicitly requested via INIT_DB=true.
+if (!process.env.VERCEL || process.env.INIT_DB === 'true') {
+  initDb().then(() => {
+    if (!process.env.VERCEL) {
+      app.listen(Number(PORT), '0.0.0.0', () => {
+        console.log(`🚀 DCC Camu Backend running on http://localhost:${PORT}`);
+      });
+    }
+  }).catch((err) => {
+    console.error('Failed to initialize database on startup:', err);
+    if (!process.env.VERCEL) {
+      app.listen(Number(PORT), '0.0.0.0');
+    }
+  });
+} else {
+  // Production serverless (Vercel) — instant boot without DDL overhead
+  console.log('⚡ Running in Vercel serverless mode (fast boot enabled)');
+}
 
 export default app;

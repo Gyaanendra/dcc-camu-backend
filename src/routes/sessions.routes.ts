@@ -9,10 +9,12 @@ const router = Router();
 // GET /api/sessions (Fetch all sessions)
 router.get('/', verifyToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const sessionList = await db.select().from(sessions).orderBy(desc(sessions.startTime));
-    const allUsers = await db.select().from(users);
-    const allTeams = await db.select().from(teams);
-    const allAttendance = await db.select().from(attendance);
+    const [sessionList, allUsers, allTeams, allAttendance] = await Promise.all([
+      db.select().from(sessions).orderBy(desc(sessions.startTime)),
+      db.select().from(users),
+      db.select().from(teams),
+      db.select().from(attendance),
+    ]);
 
     const userMap = new Map(allUsers.map(u => [u.id, u]));
     const teamMap = new Map(allTeams.map(t => [t.id, t]));

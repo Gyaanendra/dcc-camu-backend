@@ -263,8 +263,10 @@ router.post('/manual', verifyToken, requireAdmin, async (req: AuthenticatedReque
 const getMyStatsHandler = async (req: AuthenticatedRequest, res: Response) => {
   try {
     const userId = req.user!.id;
-    const allSessions = await db.select().from(sessions);
-    const myAttendance = await db.select().from(attendance).where(eq(attendance.userId, userId));
+    const [allSessions, myAttendance] = await Promise.all([
+      db.select().from(sessions),
+      db.select().from(attendance).where(eq(attendance.userId, userId)),
+    ]);
 
     const totalEligibleSessions = allSessions.length;
     const attendedCount = myAttendance.length;
@@ -316,10 +318,12 @@ router.get('/my_stats', verifyToken, getMyStatsHandler);
 // GET /api/attendance/analytics or /api/attendance/admin-analytics (Admin: Comprehensive Analytics Engine)
 const getAdminAnalyticsHandler = async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const allUsers = await db.select().from(users);
-    const allTeams = await db.select().from(teams);
-    const allSessions = await db.select().from(sessions);
-    const allAttendance = await db.select().from(attendance);
+    const [allUsers, allTeams, allSessions, allAttendance] = await Promise.all([
+      db.select().from(users),
+      db.select().from(teams),
+      db.select().from(sessions),
+      db.select().from(attendance),
+    ]);
 
     const memberUsers = allUsers.filter(u => u.role === 'user');
     const adminUsers = allUsers.filter(u => u.role === 'admin');

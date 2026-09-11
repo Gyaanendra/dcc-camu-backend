@@ -100,9 +100,11 @@ router.post('/', verifyToken, requireAdmin, async (req: AuthenticatedRequest, re
 // GET /api/users (Admin + Advisor read-only list all users)
 router.get('/', verifyToken, requireViewer, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const allUsers = await db.select().from(users);
-    const allTeams = await db.select().from(teams);
-    const allAttendance = await db.select().from(attendance);
+    const [allUsers, allTeams, allAttendance] = await Promise.all([
+      db.select().from(users),
+      db.select().from(teams),
+      db.select().from(attendance),
+    ]);
 
     const teamMap = new Map(allTeams.map(t => [t.id, t]));
 
