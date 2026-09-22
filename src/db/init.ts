@@ -45,6 +45,8 @@ export async function initDb() {
         type VARCHAR(50) DEFAULT 'regular' NOT NULL,
         description TEXT,
         team_id UUID REFERENCES teams(id) ON DELETE CASCADE,
+        target_audience VARCHAR(50) DEFAULT 'all' NOT NULL,
+        target_team_ids TEXT,
         qr_code_token TEXT NOT NULL,
         location VARCHAR(200) DEFAULT 'DCC Hub / Auditorium',
         created_by_id UUID REFERENCES users(id) ON DELETE CASCADE,
@@ -54,6 +56,14 @@ export async function initDb() {
         created_at TIMESTAMP DEFAULT NOW() NOT NULL
       );
     `;
+
+    // Migration helper: Add target_audience and target_team_ids if they do not exist
+    try {
+      await sql`ALTER TABLE sessions ADD COLUMN IF NOT EXISTS target_audience VARCHAR(50) DEFAULT 'all' NOT NULL;`;
+      await sql`ALTER TABLE sessions ADD COLUMN IF NOT EXISTS target_team_ids TEXT;`;
+    } catch (e) {
+      // Columns already exist or error ignored
+    }
 
     // 4. Create Attendance Table
     await sql`

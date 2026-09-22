@@ -3,6 +3,7 @@ import { db } from '../db';
 import { attendance, sessions, users, teams } from '../db/schema';
 import { eq, and, desc, sql } from 'drizzle-orm';
 import { verifyToken, requireAdmin, requireViewer, blockAdvisor, isUuid, AuthenticatedRequest } from '../middleware/auth';
+import { getAcademicYear, isSessionApplicableToUser, parseTargetTeamIds } from '../utils/member-helpers';
 
 const router = Router();
 
@@ -20,36 +21,74 @@ router.get('/sheet', verifyToken, requireViewer, async (req: AuthenticatedReques
     // "userId:sessionId" -> status, for O(1) cell lookups
     const recordMap = new Map(allAttendance.map(a => [`${a.userId}:${a.sessionId}`, a.status]));
 
-    const sessionList = allSessions.map(s => ({
-      id: s.id,
-      title: s.title,
-      type: s.type,
-      startTime: s.startTime,
-      isActive: s.isActive,
-    }));
+    const sessionList = allSessions.map(s => {
+      const parsedTeams = parseTargetTeamIds(s.targetTeamIds, s.teamId);
+      return {
+        id: s.id,
+        title: s.title,
+        type: s.type,
+        startTime: s.startTime,
+        isActive: s.isActive,
+        targetAudience: s.targetAudience || 'all',
+        targetTeamIds: parsedTeams,
+      };
+    });
 
     const members = allUsers
       .map(u => {
         const team = u.teamId ? teamMap.get(u.teamId) : null;
         const records: Record<string, string | null> = {};
         let attended = 0;
+        let eligibleSessions = 0;
+        const isExempt = u.role === 'advisor';
+
         for (const s of allSessions) {
           const status = recordMap.get(`${u.id}:${s.id}`) || null;
-          records[s.id] = status;
-          if (status) attended++;
+
+          if (isExempt) {
+            records[s.id] = status || 'advisor_exempt';
+            if (status === 'present' || status === 'late') attended++;
+          } else if (status === 'not_in_club') {
+            // Marked explicitly as not in club -> does NOT count against denominator
+            records[s.id] = 'not_in_club';
+          } else if (status === 'present' || status === 'late') {
+            records[s.id] = status;
+            attended++;
+            eligibleSessions++;
+          } else {
+            // No record in DB -> evaluate applicability (pre-join date, wing restriction, heads only)
+            const applicability = isSessionApplicableToUser(s, u, false);
+            if (!applicability.applicable) {
+              records[s.id] = applicability.reason || 'not_applicable';
+            } else {
+              // Applicable meeting, but member did not attend
+              records[s.id] = null; // Unexcused absence
+              eligibleSessions++;
+            }
+          }
         }
+
+        const attendanceRate = isExempt
+          ? 100
+          : eligibleSessions > 0
+          ? Math.round((attended / eligibleSessions) * 100)
+          : 100;
+
         return {
           id: u.id,
           name: u.name,
           rollNumber: u.rollNumber,
+          academicYear: getAcademicYear(u.rollNumber),
           position: u.position,
           role: u.role,
+          isExempt,
           teamId: u.teamId,
           teamName: team ? team.name : 'Unassigned',
           teamCode: team ? team.code : 'N/A',
           avatarUrl: u.avatarUrl,
           attended,
-          attendanceRate: allSessions.length > 0 ? Math.round((attended / allSessions.length) * 100) : 0,
+          eligibleSessions,
+          attendanceRate,
           records,
         };
       })
@@ -108,6 +147,9 @@ router.post('/scan', verifyToken, blockAdvisor, async (req: AuthenticatedRequest
         id: currentUser.id,
         name: currentUser.name,
         rollNumber: currentUser.rollNumber,
+        role: currentUser.role,
+        position: currentUser.position,
+        teamId: currentUser.teamId,
       };
     } else if (memberRollNumber && currentUser.role === 'admin') {
       // Case 2: Admin scanned or entered a Member's Roll Number
@@ -122,6 +164,10 @@ router.post('/scan', verifyToken, blockAdvisor, async (req: AuthenticatedRequest
           id: users.id,
           name: users.name,
           rollNumber: users.rollNumber,
+          role: users.role,
+          position: users.position,
+          teamId: users.teamId,
+          avatarUrl: users.avatarUrl,
         })
         .from(users)
         .where(sql`UPPER(${users.rollNumber}) = ${trimmedRoll}`)
@@ -146,6 +192,17 @@ router.post('/scan', verifyToken, blockAdvisor, async (req: AuthenticatedRequest
       session = sessionResults[0];
     } else {
       return res.status(400).json({ error: 'Invalid scan payload. Provide valid QR token or Roll Number.' });
+    }
+
+    // Check audience restrictions (Heads only, Specific Wings)
+    const applicability = isSessionApplicableToUser(session, targetUser, false);
+    if (!applicability.applicable) {
+      if (applicability.reason === 'not_a_head') {
+        return res.status(403).json({ error: 'This meeting is reserved for Club Heads & Leads only.' });
+      }
+      if (applicability.reason === 'not_in_team') {
+        return res.status(403).json({ error: 'This meeting is reserved for members of specific wings only.' });
+      }
     }
 
     // Check if session has been closed / ended
@@ -215,7 +272,8 @@ router.post('/scan', verifyToken, blockAdvisor, async (req: AuthenticatedRequest
 // POST /api/attendance/manual (Admin: Manual Override)
 router.post('/manual', verifyToken, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const { sessionId, userId, action } = req.body; // action = 'mark_present' | 'mark_absent'
+    const { sessionId, userId, action } = req.body; 
+    // action = 'mark_present' | 'mark_late' | 'mark_absent' | 'mark_not_in_club'
 
     if (!sessionId || !userId) {
       return res.status(400).json({ error: 'Session ID and User ID are required.' });
@@ -227,15 +285,18 @@ router.post('/manual', verifyToken, requireAdmin, async (req: AuthenticatedReque
     }
     const [targetSession, targetUser] = await Promise.all([
       db.select({ id: sessions.id }).from(sessions).where(eq(sessions.id, sessionId)).limit(1),
-      db.select({ id: users.id }).from(users).where(eq(users.id, userId)).limit(1),
+      db.select({ id: users.id, name: users.name }).from(users).where(eq(users.id, userId)).limit(1),
     ]);
     if (targetSession.length === 0) return res.status(404).json({ error: 'Target session not found.' });
     if (targetUser.length === 0) return res.status(404).json({ error: 'Target member not found.' });
 
     if (action === 'mark_absent') {
       await db.delete(attendance).where(and(eq(attendance.sessionId, sessionId), eq(attendance.userId, userId)));
-      return res.json({ message: 'Attendance record removed (marked absent).' });
+      return res.json({ message: `Attendance record removed for ${targetUser[0].name} (marked absent).`, status: 'absent' });
     } else {
+      const targetStatus: 'present' | 'late' | 'not_in_club' =
+        action === 'mark_late' ? 'late' : action === 'mark_not_in_club' ? 'not_in_club' : 'present';
+
       const existing = await db
         .select()
         .from(attendance)
@@ -246,15 +307,34 @@ router.post('/manual', verifyToken, requireAdmin, async (req: AuthenticatedReque
         await db.insert(attendance).values({
           sessionId,
           userId,
-          status: 'present',
+          status: targetStatus,
           scanMethod: 'manual',
           scannedAt: new Date(),
-          metadata: JSON.stringify({ overriddenByAdmin: req.user!.name }),
+          metadata: JSON.stringify({ overriddenByAdmin: req.user!.name, action }),
         });
+      } else {
+        await db
+          .update(attendance)
+          .set({
+            status: targetStatus,
+            metadata: JSON.stringify({ overriddenByAdmin: req.user!.name, previousStatus: existing[0].status, action }),
+          })
+          .where(and(eq(attendance.sessionId, sessionId), eq(attendance.userId, userId)));
       }
-      return res.json({ message: 'Attendance marked present manually.' });
+
+      const statusLabels = {
+        present: 'present (on time)',
+        late: 'late',
+        not_in_club: 'not in club (exempt)',
+      };
+
+      return res.json({
+        message: `Marked ${targetUser[0].name} as ${statusLabels[targetStatus]}.`,
+        status: targetStatus,
+      });
     }
   } catch (error: any) {
+    console.error('Manual attendance error:', error);
     return res.status(500).json({ error: 'Manual attendance override failed.' });
   }
 });
@@ -263,14 +343,45 @@ router.post('/manual', verifyToken, requireAdmin, async (req: AuthenticatedReque
 const getMyStatsHandler = async (req: AuthenticatedRequest, res: Response) => {
   try {
     const userId = req.user!.id;
-    const [allSessions, myAttendance] = await Promise.all([
-      db.select().from(sessions),
+    const [userRecord, allSessions, myAttendance] = await Promise.all([
+      db.select().from(users).where(eq(users.id, userId)).limit(1),
+      db.select().from(sessions).orderBy(desc(sessions.startTime)),
       db.select().from(attendance).where(eq(attendance.userId, userId)),
     ]);
 
-    const totalEligibleSessions = allSessions.length;
-    const attendedCount = myAttendance.length;
-    const attendancePercentage = totalEligibleSessions > 0 ? Math.round((attendedCount / totalEligibleSessions) * 100) : 0;
+    const currentUser = userRecord[0] || req.user!;
+    const isExempt = currentUser.role === 'advisor';
+
+    const attendanceMap = new Map(myAttendance.map(a => [a.sessionId, a]));
+
+    // Calculate eligible sessions (considering join date, wing restriction, and not_in_club manual overrides)
+    let totalEligibleSessions = 0;
+    let attendedCount = 0;
+    let lateCount = 0;
+
+    for (const s of allSessions) {
+      const record = attendanceMap.get(s.id);
+      if (isExempt) {
+        if (record?.status === 'present' || record?.status === 'late') attendedCount++;
+      } else if (record?.status === 'not_in_club') {
+        // Not in club -> exempt from denominator
+      } else if (record?.status === 'present' || record?.status === 'late') {
+        attendedCount++;
+        totalEligibleSessions++;
+        if (record.status === 'late') lateCount++;
+      } else {
+        const applicability = isSessionApplicableToUser(s, currentUser, false);
+        if (applicability.applicable) {
+          totalEligibleSessions++;
+        }
+      }
+    }
+
+    const attendancePercentage = isExempt
+      ? 100
+      : totalEligibleSessions > 0
+      ? Math.round((attendedCount / totalEligibleSessions) * 100)
+      : 100;
 
     // Calculate Streak
     const sortedAttendance = [...myAttendance].sort((a, b) => new Date(b.scannedAt).getTime() - new Date(a.scannedAt).getTime());
@@ -282,6 +393,9 @@ const getMyStatsHandler = async (req: AuthenticatedRequest, res: Response) => {
         break;
       }
     }
+
+    const onTimeCount = attendedCount - lateCount;
+    const punctualityPercentage = attendedCount > 0 ? Math.round((onTimeCount / attendedCount) * 100) : 100;
 
     // Detail breakdown
     const sessionMap = new Map(allSessions.map(s => [s.id, s]));
@@ -304,6 +418,9 @@ const getMyStatsHandler = async (req: AuthenticatedRequest, res: Response) => {
         absentCount: Math.max(0, totalEligibleSessions - attendedCount),
         attendancePercentage,
         currentStreak,
+        punctualityPercentage,
+        isExempt,
+        exemptionNote: isExempt ? 'Faculty / Club Advisor (Attendance Exempt)' : null,
       },
       history,
     });
@@ -328,27 +445,108 @@ const getAdminAnalyticsHandler = async (req: AuthenticatedRequest, res: Response
     const memberUsers = allUsers.filter(u => u.role === 'user');
     const adminUsers = allUsers.filter(u => u.role === 'admin');
     const advisorUsers = allUsers.filter(u => u.role === 'advisor');
+    const nonAdvisorUsers = allUsers.filter(u => u.role !== 'advisor');
+
     const totalMembers = memberUsers.length;
     const totalAdmins = adminUsers.length;
     const totalAdvisors = advisorUsers.length;
     const totalUsers = allUsers.length;
     const totalSessions = allSessions.length;
-    const totalPossibleAttendance = totalMembers * (totalSessions || 1);
-    const totalPresentRecords = allAttendance.length;
 
-    const overallAttendanceRate = totalPossibleAttendance > 0 ? Math.round((totalPresentRecords / totalPossibleAttendance) * 100) : 0;
+    // Build O(1) attendance lookup
+    const recordMap = new Map(allAttendance.map(a => [`${a.userId}:${a.sessionId}`, a.status]));
 
-    // Teamwise Breakdown Analytics
+    // Individual Member Breakdown with prorated eligibility & academic year
+    const teamMap = new Map(allTeams.map(t => [t.id, t]));
+    let totalPossibleOpportunities = 0;
+    let totalValidAttendedAcrossMembers = 0;
+
+    const memberAnalytics = allUsers.map(member => {
+      const isExempt = member.role === 'advisor';
+      let eligibleSessions = 0;
+      let attended = 0;
+
+      for (const s of allSessions) {
+        const status = recordMap.get(`${member.id}:${s.id}`);
+        if (isExempt) {
+          if (status === 'present' || status === 'late') attended++;
+        } else if (status === 'not_in_club') {
+          // Exempt from denominator
+        } else if (status === 'present' || status === 'late') {
+          attended++;
+          eligibleSessions++;
+        } else {
+          const applicability = isSessionApplicableToUser(s, member, false);
+          if (applicability.applicable) {
+            eligibleSessions++;
+          }
+        }
+      }
+
+      if (!isExempt) {
+        totalPossibleOpportunities += eligibleSessions;
+        totalValidAttendedAcrossMembers += attended;
+      }
+
+      const rate = isExempt
+        ? 100
+        : eligibleSessions > 0
+        ? Math.round((attended / eligibleSessions) * 100)
+        : 100;
+
+      const team = member.teamId ? teamMap.get(member.teamId) : null;
+      const memberLogs = allAttendance.filter(a => a.userId === member.id && (a.status === 'present' || a.status === 'late'));
+
+      return {
+        id: member.id,
+        name: member.name,
+        email: member.email,
+        rollNumber: member.rollNumber,
+        academicYear: getAcademicYear(member.rollNumber),
+        role: member.role,
+        isExempt,
+        teamName: team ? team.name : 'Unassigned',
+        teamCode: team ? team.code : 'N/A',
+        avatarUrl: member.avatarUrl,
+        attendedSessions: attended,
+        eligibleSessions,
+        totalSessions,
+        attendancePercentage: rate,
+        lastActive: memberLogs.length > 0 ? memberLogs[memberLogs.length - 1].scannedAt : member.createdAt,
+      };
+    });
+
+    const overallAttendanceRate =
+      totalPossibleOpportunities > 0
+        ? Math.round((totalValidAttendedAcrossMembers / totalPossibleOpportunities) * 100)
+        : 100;
+
+    // Teamwise Breakdown Analytics (excluding advisors)
     const teamAnalytics = allTeams.map(team => {
       const teamMembers = memberUsers.filter(u => u.teamId === team.id);
-      const memberIds = new Set(teamMembers.map(u => u.id));
-      const teamAttendanceLogs = allAttendance.filter(a => memberIds.has(a.userId));
+      let teamPossible = 0;
+      let teamPresent = 0;
+      let teamLate = 0;
 
-      const teamPossible = teamMembers.length * (totalSessions || 1);
-      const teamPresent = teamAttendanceLogs.filter(a => a.status === 'present').length;
-      const teamLate = teamAttendanceLogs.filter(a => a.status === 'late').length;
+      for (const m of teamMembers) {
+        for (const s of allSessions) {
+          const status = recordMap.get(`${m.id}:${s.id}`);
+          if (status === 'not_in_club') continue;
+          if (status === 'present') {
+            teamPresent++;
+            teamPossible++;
+          } else if (status === 'late') {
+            teamLate++;
+            teamPossible++;
+          } else {
+            const app = isSessionApplicableToUser(s, m, false);
+            if (app.applicable) teamPossible++;
+          }
+        }
+      }
+
       const teamTotal = teamPresent + teamLate;
-      const rate = teamPossible > 0 ? Math.round((teamTotal / teamPossible) * 100) : 0;
+      const rate = teamPossible > 0 ? Math.round((teamTotal / teamPossible) * 100) : 100;
 
       return {
         teamId: team.id,
@@ -367,29 +565,6 @@ const getAdminAnalyticsHandler = async (req: AuthenticatedRequest, res: Response
     const onTimeCount = allAttendance.filter(a => a.status === 'present').length;
     const lateCount = allAttendance.filter(a => a.status === 'late').length;
 
-    // Individual Member Breakdown
-    const teamMap = new Map(allTeams.map(t => [t.id, t]));
-    const memberAnalytics = memberUsers.map(member => {
-      const memberLogs = allAttendance.filter(a => a.userId === member.id);
-      const attended = memberLogs.length;
-      const rate = totalSessions > 0 ? Math.round((attended / totalSessions) * 100) : 0;
-      const team = member.teamId ? teamMap.get(member.teamId) : null;
-
-      return {
-        id: member.id,
-        name: member.name,
-        email: member.email,
-        rollNumber: member.rollNumber,
-        teamName: team ? team.name : 'Unassigned',
-        teamCode: team ? team.code : 'N/A',
-        avatarUrl: member.avatarUrl,
-        attendedSessions: attended,
-        totalSessions,
-        attendancePercentage: rate,
-        lastActive: memberLogs.length > 0 ? memberLogs[memberLogs.length - 1].scannedAt : member.createdAt,
-      };
-    });
-
     return res.json({
       summary: {
         totalMembers,
@@ -397,7 +572,7 @@ const getAdminAnalyticsHandler = async (req: AuthenticatedRequest, res: Response
         totalAdvisors,
         totalUsers,
         totalSessions,
-        totalAttendanceRecords: totalPresentRecords,
+        totalAttendanceRecords: allAttendance.filter(a => a.status === 'present' || a.status === 'late').length,
         overallAttendanceRate,
         onTimeCount,
         lateCount,

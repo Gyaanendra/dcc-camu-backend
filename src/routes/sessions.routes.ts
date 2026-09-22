@@ -3,6 +3,7 @@ import { db } from '../db';
 import { sessions, users, teams, attendance } from '../db/schema';
 import { eq, desc } from 'drizzle-orm';
 import { verifyToken, requireAdmin, isUuid, AuthenticatedRequest } from '../middleware/auth';
+import { parseTargetTeamIds } from '../utils/member-helpers';
 
 const router = Router();
 
@@ -21,13 +22,37 @@ router.get('/', verifyToken, async (req: AuthenticatedRequest, res: Response) =>
 
     const enriched = sessionList.map(s => {
       const creator = s.createdById ? userMap.get(s.createdById) : null;
-      const team = s.teamId ? teamMap.get(s.teamId) : null;
       const sessionAttendance = allAttendance.filter(a => a.sessionId === s.id);
+
+      const targetAudience = s.targetAudience || 'all';
+      let audienceLabel = 'All Wings / Open Session';
+      let teamName = 'All Teams / Open Session';
+
+      if (targetAudience === 'heads_only') {
+        audienceLabel = 'Heads & Leads Only';
+        teamName = 'Heads & Leads Only';
+      } else if (targetAudience === 'teams_only' || s.teamId) {
+        const teamIds = parseTargetTeamIds(s.targetTeamIds, s.teamId);
+        const matchedTeams = teamIds.map(id => teamMap.get(id)).filter(Boolean);
+        if (matchedTeams.length > 0) {
+          const names = matchedTeams.map(t => t!.name).join(', ');
+          audienceLabel = names;
+          teamName = names;
+        } else {
+          audienceLabel = 'Specific Wings';
+          teamName = 'Specific Wings';
+        }
+      }
+
+      const parsedTeamIds = parseTargetTeamIds(s.targetTeamIds, s.teamId);
 
       return {
         ...s,
+        targetAudience,
+        targetTeamIds: parsedTeamIds,
+        audienceLabel,
         createdByName: creator ? creator.name : 'System Admin',
-        teamName: team ? team.name : 'All Teams / Open Session',
+        teamName,
         attendeeCount: sessionAttendance.length,
       };
     });
@@ -81,7 +106,7 @@ router.get('/:id', verifyToken, async (req: AuthenticatedRequest, res: Response)
 // POST /api/sessions (Admin: Create new attendance session & generate QR token)
 router.post('/', verifyToken, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const { title, type, description, teamId, location, durationMinutes } = req.body;
+    const { title, type, description, teamId, targetAudience, targetTeamIds, location, durationMinutes } = req.body;
 
     if (!title) {
       return res.status(400).json({ error: 'Session title is required.' });
@@ -94,16 +119,23 @@ router.post('/', verifyToken, requireAdmin, async (req: AuthenticatedRequest, re
     const startTime = new Date();
     const endTime = new Date(startTime.getTime() + duration * 60 * 1000);
 
-    // Cross-check team assignment against the DB — never trust a client id.
-    let validatedTeamId: string | null = null;
-    if (teamId && String(teamId).trim()) {
-      if (!isUuid(String(teamId).trim())) return res.status(400).json({ error: 'Invalid team id.' });
-      const foundTeam = await db.select().from(teams).where(eq(teams.id, String(teamId).trim())).limit(1);
-      if (foundTeam.length === 0) {
-        return res.status(400).json({ error: 'Assigned team not found.' });
+    const validatedAudience: 'all' | 'heads_only' | 'teams_only' =
+      targetAudience === 'heads_only' || targetAudience === 'teams_only' ? targetAudience : 'all';
+
+    // Validate team IDs if targetAudience is teams_only or teamId provided
+    const validTeamIds: string[] = [];
+    if (Array.isArray(targetTeamIds) && targetTeamIds.length > 0) {
+      for (const tid of targetTeamIds) {
+        if (tid && typeof tid === 'string' && isUuid(tid.trim())) {
+          validTeamIds.push(tid.trim());
+        }
       }
-      validatedTeamId = foundTeam[0].id;
+    } else if (teamId && String(teamId).trim() && isUuid(String(teamId).trim())) {
+      validTeamIds.push(String(teamId).trim());
     }
+
+    let primaryTeamId: string | null = validTeamIds.length > 0 ? validTeamIds[0] : null;
+    let storedTargetTeamIds: string | null = validTeamIds.length > 0 ? JSON.stringify(validTeamIds) : null;
 
     // Generate unique QR code payload token
     const randomHex = Math.random().toString(36).substring(2, 10).toUpperCase();
@@ -115,7 +147,9 @@ router.post('/', verifyToken, requireAdmin, async (req: AuthenticatedRequest, re
         title: title.trim(),
         type: type || 'regular',
         description: description || '',
-        teamId: validatedTeamId,
+        teamId: primaryTeamId,
+        targetAudience: validatedAudience,
+        targetTeamIds: storedTargetTeamIds,
         qrCodeToken,
         location: location || 'DCC Auditorium',
         createdById: req.user!.id,

@@ -4,6 +4,7 @@ import { users, teams, attendance } from '../db/schema';
 import { eq, isNull } from 'drizzle-orm';
 import { verifyToken, requireAdmin, requireViewer, isUuid, AuthenticatedRequest } from '../middleware/auth';
 import { generateNotionistAvatar } from '../utils/avatar';
+import { getAcademicYear, isUserHead } from '../utils/member-helpers';
 
 const router = Router();
 
@@ -110,15 +111,18 @@ router.get('/', verifyToken, requireViewer, async (req: AuthenticatedRequest, re
 
     const result = allUsers.map(u => {
       const team = u.teamId ? teamMap.get(u.teamId) : null;
-      const userLogs = allAttendance.filter(a => a.userId === u.id);
+      const userLogs = allAttendance.filter(a => a.userId === u.id && (a.status === 'present' || a.status === 'late'));
 
       return {
         id: u.id,
         name: u.name,
         email: u.email,
         rollNumber: u.rollNumber,
+        academicYear: getAcademicYear(u.rollNumber),
         position: u.position,
         role: u.role,
+        isHead: isUserHead(u),
+        isExempt: u.role === 'advisor',
         teamId: u.teamId,
         teamName: team ? team.name : 'Unassigned',
         teamCode: team ? team.code : 'N/A',
