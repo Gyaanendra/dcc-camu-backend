@@ -24,6 +24,8 @@ echo "📂 Current directory: $(pwd)"
 echo "📥 Fetching latest code from origin/$BRANCH..."
 git fetch origin "$BRANCH"
 git checkout "$BRANCH"
+# Discard local uncommitted changes on server (like deploy.sh chmod) to prevent merge conflicts
+git checkout -- .
 git pull origin "$BRANCH"
 
 # 3. Install production & build dependencies
