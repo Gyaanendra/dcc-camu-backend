@@ -34,10 +34,10 @@ npm install --production=false
 echo "⚙️ Building TypeScript project..."
 npm run build
 
-# 5. Restart or start the PM2 service
-echo "🔄 Reloading PM2 process ($PM2_APP_NAME)..."
+# 5. Restart or start the PM2 service with updated env
+echo "🔄 Restarting PM2 process ($PM2_APP_NAME) with updated environment..."
 if pm2 list | grep -q "$PM2_APP_NAME"; then
-    pm2 reload "$PM2_APP_NAME" || pm2 restart "$PM2_APP_NAME"
+    pm2 restart "$PM2_APP_NAME" --update-env
 else
     echo "⚠️ App '$PM2_APP_NAME' not found in PM2, starting new instance..."
     pm2 start dist/server.js --name "$PM2_APP_NAME"
@@ -47,8 +47,8 @@ fi
 pm2 save
 
 # 6. Verify health
-echo "⏳ Waiting 2 seconds for server warmup..."
-sleep 2
+echo "⏳ Waiting 3 seconds for server warmup..."
+sleep 3
 
 echo "🩺 Verifying backend response..."
 HTTP_RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:$PORT/" || echo "000")
@@ -62,6 +62,7 @@ if [ "$HTTP_RESPONSE" = "200" ]; then
 else
     echo "--------------------------------------------------------"
     echo "⚠️ Backend responded with HTTP status $HTTP_RESPONSE."
-    echo "Check PM2 logs with: pm2 logs $PM2_APP_NAME"
+    echo "📋 Recent error logs:"
+    pm2 logs "$PM2_APP_NAME" --lines 15 --nostream
     echo "--------------------------------------------------------"
 fi
