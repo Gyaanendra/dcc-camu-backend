@@ -25,13 +25,14 @@ export const MALE_HAIR_VARIANTS = [
 ];
 
 const KNOWN_FEMALE_FIRST_NAMES = new Set([
-  'disha', 'vrinda', 'rupanshi', 'yashvi', 'janavi', 'sunidhi',
+  'disha', 'vrinda', 'vvrinda', 'rupanshi', 'yashvi', 'janavi', 'sunidhi',
   'aarna', 'shreya', 'sneha', 'anushka', 'tanu', 'supriya',
   'tanzil', 'angel', 'asmita', 'nehal', 'gurnayan', 'divya',
   'nimisha', 'kanishka', 'nishtha', 'aayushi', 'shristy', 'priya',
   'ananya', 'pooja', 'neha', 'isha', 'simran', 'riya', 'rhea',
   'tanvi', 'aditi', 'muskan', 'kriti', 'khushi', 'palak', 'sakshi',
-  'megha', 'shweta', 'pallavi', 'anjali', 'sonali', 'radhika', 'swati', 'mannat'
+  'megha', 'shweta', 'pallavi', 'anjali', 'sonali', 'radhika', 'swati', 'mannat',
+  'diya', 'shikha', 'shubhika', 'bhavya', 'adrika', 'shagun', 'proma', 'tanishka'
 ]);
 
 /**

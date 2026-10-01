@@ -3,7 +3,7 @@ import { db } from '../db';
 import { attendance, sessions, users, teams } from '../db/schema';
 import { eq, and, desc, sql } from 'drizzle-orm';
 import { verifyToken, requireAdmin, requireViewer, blockAdvisor, isUuid, AuthenticatedRequest } from '../middleware/auth';
-import { getAcademicYear, isSessionApplicableToUser, parseTargetTeamIds } from '../utils/member-helpers';
+import { getAcademicYear, isSessionApplicableToUser, parseTargetTeamIds, parseTargetYears } from '../utils/member-helpers';
 
 const router = Router();
 
@@ -23,6 +23,7 @@ router.get('/sheet', verifyToken, requireViewer, async (req: AuthenticatedReques
 
     const sessionList = allSessions.map(s => {
       const parsedTeams = parseTargetTeamIds(s.targetTeamIds, s.teamId);
+      const parsedYears = parseTargetYears(s.targetYears);
       return {
         id: s.id,
         title: s.title,
@@ -31,6 +32,8 @@ router.get('/sheet', verifyToken, requireViewer, async (req: AuthenticatedReques
         isActive: s.isActive,
         targetAudience: s.targetAudience || 'all',
         targetTeamIds: parsedTeams,
+        targetYears: parsedYears,
+        yearsLabel: parsedYears.length > 0 ? parsedYears.join(', ') : 'All Years',
       };
     });
 

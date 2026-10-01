@@ -3,7 +3,7 @@ import { db } from '../db';
 import { sessions, users, teams, attendance } from '../db/schema';
 import { eq, desc } from 'drizzle-orm';
 import { verifyToken, requireAdmin, isUuid, AuthenticatedRequest } from '../middleware/auth';
-import { parseTargetTeamIds } from '../utils/member-helpers';
+import { parseTargetTeamIds, parseTargetYears } from '../utils/member-helpers';
 
 const router = Router();
 
@@ -45,11 +45,15 @@ router.get('/', verifyToken, async (req: AuthenticatedRequest, res: Response) =>
       }
 
       const parsedTeamIds = parseTargetTeamIds(s.targetTeamIds, s.teamId);
+      const parsedYears = parseTargetYears(s.targetYears);
+      const yearsLabel = parsedYears.length > 0 ? parsedYears.join(', ') : 'All Years';
 
       return {
         ...s,
         targetAudience,
         targetTeamIds: parsedTeamIds,
+        targetYears: parsedYears,
+        yearsLabel,
         audienceLabel,
         createdByName: creator ? creator.name : 'System Admin',
         teamName,
@@ -106,7 +110,7 @@ router.get('/:id', verifyToken, async (req: AuthenticatedRequest, res: Response)
 // POST /api/sessions (Admin: Create new attendance session & generate QR token)
 router.post('/', verifyToken, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const { title, type, description, teamId, targetAudience, targetTeamIds, location, durationMinutes } = req.body;
+    const { title, type, description, teamId, targetAudience, targetTeamIds, targetYears, location, durationMinutes } = req.body;
 
     if (!title) {
       return res.status(400).json({ error: 'Session title is required.' });
@@ -137,6 +141,16 @@ router.post('/', verifyToken, requireAdmin, async (req: AuthenticatedRequest, re
     let primaryTeamId: string | null = validTeamIds.length > 0 ? validTeamIds[0] : null;
     let storedTargetTeamIds: string | null = validTeamIds.length > 0 ? JSON.stringify(validTeamIds) : null;
 
+    // Validate target academic years (e.g. ['1st Year', '2nd Year', '3rd Year', '4th Year'])
+    const ALLOWED_YEARS = new Set(['1st Year', '2nd Year', '3rd Year', '4th Year']);
+    let storedTargetYears: string | null = null;
+    if (Array.isArray(targetYears) && targetYears.length > 0) {
+      const filteredYears = targetYears.filter((y: string) => ALLOWED_YEARS.has(y));
+      if (filteredYears.length > 0 && filteredYears.length < 4) {
+        storedTargetYears = JSON.stringify(filteredYears);
+      }
+    }
+
     // Generate unique QR code payload token
     const randomHex = Math.random().toString(36).substring(2, 10).toUpperCase();
     const qrCodeToken = `DCC_QR_${type || 'SESSION'}_${Date.now()}_${randomHex}`;
@@ -150,6 +164,7 @@ router.post('/', verifyToken, requireAdmin, async (req: AuthenticatedRequest, re
         teamId: primaryTeamId,
         targetAudience: validatedAudience,
         targetTeamIds: storedTargetTeamIds,
+        targetYears: storedTargetYears,
         qrCodeToken,
         location: location || 'DCC Auditorium',
         createdById: req.user!.id,

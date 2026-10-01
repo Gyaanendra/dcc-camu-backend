@@ -35,6 +35,7 @@ export const sessions = pgTable('sessions', {
   teamId: uuid('team_id').references(() => teams.id, { onDelete: 'cascade' }),
   targetAudience: varchar('target_audience', { length: 50 }).$type<'all' | 'heads_only' | 'teams_only'>().default('all').notNull(),
   targetTeamIds: text('target_team_ids'),
+  targetYears: text('target_years'),
   qrCodeToken: text('qr_code_token').notNull(),
   location: varchar('location', { length: 200 }).default('DCC Hub / Auditorium'),
   createdById: uuid('created_by_id').references(() => users.id, { onDelete: 'cascade' }),
