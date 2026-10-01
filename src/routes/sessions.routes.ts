@@ -155,6 +155,12 @@ router.post('/', verifyToken, requireAdmin, async (req: AuthenticatedRequest, re
     const randomHex = Math.random().toString(36).substring(2, 10).toUpperCase();
     const qrCodeToken = `DCC_QR_${type || 'SESSION'}_${Date.now()}_${randomHex}`;
 
+    // Automatically deactivate previous active live session QR so only one session QR is live
+    await db
+      .update(sessions)
+      .set({ isActive: 'false' })
+      .where(eq(sessions.isActive, 'true'));
+
     const [newSession] = await db
       .insert(sessions)
       .values({
@@ -176,7 +182,12 @@ router.post('/', verifyToken, requireAdmin, async (req: AuthenticatedRequest, re
 
     return res.status(201).json({
       message: 'Session created successfully',
-      session: newSession,
+      session: {
+        ...newSession,
+        targetYears: parseTargetYears(newSession.targetYears),
+        targetTeamIds: parseTargetTeamIds(newSession.targetTeamIds, newSession.teamId),
+        attendeeCount: 0,
+      },
     });
   } catch (error: any) {
     console.error('[Sessions Route] Error creating session:', error);

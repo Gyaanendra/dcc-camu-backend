@@ -93,3 +93,34 @@ export const attendanceRelations = relations(attendance, ({ one }) => ({
     references: [users.id],
   }),
 }));
+
+// On Duty (OD) Requests Table
+export const odRequests = pgTable('od_requests', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  userId: uuid('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
+  date: varchar('date', { length: 20 }).notNull(), // YYYY-MM-DD
+  reason: varchar('reason', { length: 255 }).notNull(),
+  sessionId: uuid('session_id').references(() => sessions.id, { onDelete: 'set null' }),
+  lectures: text('lectures').notNull(), // JSON stringified array of lectures
+  status: varchar('status', { length: 20 }).$type<'pending' | 'approved' | 'rejected'>().default('pending').notNull(),
+  adminNotes: text('admin_notes'),
+  reviewedById: uuid('reviewed_by_id').references(() => users.id, { onDelete: 'set null' }),
+  reviewedAt: timestamp('reviewed_at'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+});
+
+export const odRequestsRelations = relations(odRequests, ({ one }) => ({
+  user: one(users, {
+    fields: [odRequests.userId],
+    references: [users.id],
+  }),
+  session: one(sessions, {
+    fields: [odRequests.sessionId],
+    references: [sessions.id],
+  }),
+  reviewedBy: one(users, {
+    fields: [odRequests.reviewedById],
+    references: [users.id],
+  }),
+}));
+

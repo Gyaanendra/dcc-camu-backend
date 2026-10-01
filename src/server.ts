@@ -7,6 +7,7 @@ import teamsRoutes from './routes/teams.routes';
 import sessionsRoutes from './routes/sessions.routes';
 import attendanceRoutes from './routes/attendance.routes';
 import usersRoutes from './routes/users.routes';
+import odRoutes from './routes/od.routes';
 import { sql } from './db';
 import { initDb } from './db/init';
 
@@ -156,6 +157,7 @@ app.use('/api/teams', teamsRoutes);
 app.use('/api/sessions', sessionsRoutes);
 app.use('/api/attendance', attendanceRoutes);
 app.use('/api/users', usersRoutes);
+app.use('/api/od', odRoutes);
 
 // Error handling middleware
 app.use((err: any, req: Request, res: Response, next: NextFunction) => {

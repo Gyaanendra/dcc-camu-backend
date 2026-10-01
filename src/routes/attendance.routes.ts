@@ -197,14 +197,17 @@ router.post('/scan', verifyToken, blockAdvisor, async (req: AuthenticatedRequest
       return res.status(400).json({ error: 'Invalid scan payload. Provide valid QR token or Roll Number.' });
     }
 
-    // Check audience restrictions (Heads only, Specific Wings)
+    // Check audience restrictions (Heads only, Specific Wings, Academic Year)
     const applicability = isSessionApplicableToUser(session, targetUser, false);
     if (!applicability.applicable) {
+      if (applicability.reason === 'not_in_year') {
+        return res.status(403).json({ error: 'This meeting is reserved for members of other academic years only.' });
+      }
       if (applicability.reason === 'not_a_head') {
-        return res.status(403).json({ error: 'This meeting is reserved for Club Heads & Leads only.' });
+        return res.status(403).json({ error: 'This meeting is reserved for Club Heads & Sub-Heads only.' });
       }
       if (applicability.reason === 'not_in_team') {
-        return res.status(403).json({ error: 'This meeting is reserved for members of specific wings only.' });
+        return res.status(403).json({ error: 'This meeting is restricted to members of other wings only.' });
       }
     }
 
@@ -468,15 +471,28 @@ const getAdminAnalyticsHandler = async (req: AuthenticatedRequest, res: Response
       const isExempt = member.role === 'advisor';
       let eligibleSessions = 0;
       let attended = 0;
+      let onTimeCount = 0;
+      let lateCount = 0;
 
       for (const s of allSessions) {
         const status = recordMap.get(`${member.id}:${s.id}`);
         if (isExempt) {
-          if (status === 'present' || status === 'late') attended++;
+          if (status === 'present') {
+            attended++;
+            onTimeCount++;
+          } else if (status === 'late') {
+            attended++;
+            lateCount++;
+          }
         } else if (status === 'not_in_club') {
           // Exempt from denominator
-        } else if (status === 'present' || status === 'late') {
+        } else if (status === 'present') {
           attended++;
+          onTimeCount++;
+          eligibleSessions++;
+        } else if (status === 'late') {
+          attended++;
+          lateCount++;
           eligibleSessions++;
         } else {
           const applicability = isSessionApplicableToUser(s, member, false);
@@ -497,6 +513,9 @@ const getAdminAnalyticsHandler = async (req: AuthenticatedRequest, res: Response
         ? Math.round((attended / eligibleSessions) * 100)
         : 100;
 
+      const punctualityRate = attended > 0 ? Math.round((onTimeCount / attended) * 100) : 100;
+      const isAtRisk = !isExempt && eligibleSessions >= 2 && rate < 75;
+
       const team = member.teamId ? teamMap.get(member.teamId) : null;
       const memberLogs = allAttendance.filter(a => a.userId === member.id && (a.status === 'present' || a.status === 'late'));
 
@@ -506,15 +525,22 @@ const getAdminAnalyticsHandler = async (req: AuthenticatedRequest, res: Response
         email: member.email,
         rollNumber: member.rollNumber,
         academicYear: getAcademicYear(member.rollNumber),
+        position: member.position || 'Member',
         role: member.role,
+        teamId: member.teamId,
         isExempt,
         teamName: team ? team.name : 'Unassigned',
         teamCode: team ? team.code : 'N/A',
         avatarUrl: member.avatarUrl,
+        totalAttended: attended,
         attendedSessions: attended,
+        onTimeCount,
+        lateCount,
         eligibleSessions,
         totalSessions,
         attendancePercentage: rate,
+        punctualityRate,
+        isAtRisk,
         lastActive: memberLogs.length > 0 ? memberLogs[memberLogs.length - 1].scannedAt : member.createdAt,
       };
     });
