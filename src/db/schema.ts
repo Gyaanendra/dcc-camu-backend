@@ -1,59 +1,86 @@
-import { pgTable, text, timestamp, uuid, varchar } from 'drizzle-orm/pg-core';
+import { sqliteTable, text, integer } from 'drizzle-orm/sqlite-core';
 import { relations } from 'drizzle-orm';
 
 // Teams Table
-export const teams = pgTable('teams', {
-  id: uuid('id').defaultRandom().primaryKey(),
-  name: varchar('name', { length: 100 }).notNull().unique(),
-  code: varchar('code', { length: 20 }).notNull().unique(),
+export const teams = sqliteTable('teams', {
+  id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+  name: text('name').notNull().unique(),
+  code: text('code').notNull().unique(),
   description: text('description'),
-  color: varchar('color', { length: 30 }).default('#3b82f6'),
-  createdAt: timestamp('created_at').defaultNow().notNull(),
+  color: text('color').default('#3b82f6'),
+  createdAt: integer('created_at', { mode: 'timestamp_ms' })
+    .notNull()
+    .$defaultFn(() => new Date()),
 });
 
 // Users Table (Admins, Advisors & Members)
 // role: 'admin' = full access, 'advisor' = read-only view access, 'user' = member self-service
-export const users = pgTable('users', {
-  id: uuid('id').defaultRandom().primaryKey(),
-  name: varchar('name', { length: 150 }).notNull(),
-  email: varchar('email', { length: 255 }).notNull().unique(),
+export const users = sqliteTable('users', {
+  id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+  name: text('name').notNull(),
+  email: text('email').notNull().unique(),
   password: text('password').notNull(), // Plain text password column
-  rollNumber: varchar('roll_number', { length: 50 }).notNull().unique(),
-  position: varchar('position', { length: 100 }).default('Member').notNull(),
-  role: varchar('role', { length: 20 }).$type<'admin' | 'advisor' | 'user'>().default('user').notNull(),
-  teamId: uuid('team_id').references(() => teams.id, { onDelete: 'set null' }),
+  rollNumber: text('roll_number').notNull().unique(),
+  position: text('position').default('Member').notNull(),
+  role: text('role').$type<'admin' | 'advisor' | 'user'>().default('user').notNull(),
+  teamId: text('team_id').references(() => teams.id, { onDelete: 'set null' }),
   avatarUrl: text('avatar_url'),
-  createdAt: timestamp('created_at').defaultNow().notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp_ms' })
+    .notNull()
+    .$defaultFn(() => new Date()),
 });
 
 // Attendance Sessions Table
-export const sessions = pgTable('sessions', {
-  id: uuid('id').defaultRandom().primaryKey(),
-  title: varchar('title', { length: 200 }).notNull(),
-  type: varchar('type', { length: 50 }).$type<'regular' | 'workshop' | 'hackathon' | 'standup'>().default('regular').notNull(),
+export const sessions = sqliteTable('sessions', {
+  id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+  title: text('title').notNull(),
+  type: text('type').$type<'regular' | 'workshop' | 'hackathon' | 'standup'>().default('regular').notNull(),
   description: text('description'),
-  teamId: uuid('team_id').references(() => teams.id, { onDelete: 'cascade' }),
-  targetAudience: varchar('target_audience', { length: 50 }).$type<'all' | 'heads_only' | 'teams_only'>().default('all').notNull(),
+  teamId: text('team_id').references(() => teams.id, { onDelete: 'cascade' }),
+  targetAudience: text('target_audience').$type<'all' | 'heads_only' | 'teams_only'>().default('all').notNull(),
   targetTeamIds: text('target_team_ids'),
   targetYears: text('target_years'),
   qrCodeToken: text('qr_code_token').notNull(),
-  location: varchar('location', { length: 200 }).default('DCC Hub / Auditorium'),
-  createdById: uuid('created_by_id').references(() => users.id, { onDelete: 'cascade' }),
-  startTime: timestamp('start_time').defaultNow().notNull(),
-  endTime: timestamp('end_time').notNull(),
-  isActive: varchar('is_active', { length: 10 }).default('true').notNull(),
-  createdAt: timestamp('created_at').defaultNow().notNull(),
+  location: text('location').default('DCC Hub / Auditorium'),
+  createdById: text('created_by_id').references(() => users.id, { onDelete: 'cascade' }),
+  startTime: integer('start_time', { mode: 'timestamp_ms' })
+    .notNull()
+    .$defaultFn(() => new Date()),
+  endTime: integer('end_time', { mode: 'timestamp_ms' }).notNull(),
+  isActive: text('is_active').default('true').notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp_ms' })
+    .notNull()
+    .$defaultFn(() => new Date()),
 });
 
 // Attendance Records Table
-export const attendance = pgTable('attendance', {
-  id: uuid('id').defaultRandom().primaryKey(),
-  sessionId: uuid('session_id').references(() => sessions.id, { onDelete: 'cascade' }).notNull(),
-  userId: uuid('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
-  status: varchar('status', { length: 20 }).$type<'present' | 'late' | 'not_in_club'>().default('present').notNull(),
-  scanMethod: varchar('scan_method', { length: 30 }).$type<'user_scanner' | 'admin_scanner' | 'manual'>().default('user_scanner').notNull(),
-  scannedAt: timestamp('scanned_at').defaultNow().notNull(),
+export const attendance = sqliteTable('attendance', {
+  id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+  sessionId: text('session_id').references(() => sessions.id, { onDelete: 'cascade' }).notNull(),
+  userId: text('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
+  status: text('status').$type<'present' | 'late' | 'not_in_club'>().default('present').notNull(),
+  scanMethod: text('scan_method').$type<'user_scanner' | 'admin_scanner' | 'manual'>().default('user_scanner').notNull(),
+  scannedAt: integer('scanned_at', { mode: 'timestamp_ms' })
+    .notNull()
+    .$defaultFn(() => new Date()),
   metadata: text('metadata'),
+});
+
+// On Duty (OD) Requests Table
+export const odRequests = sqliteTable('od_requests', {
+  id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+  userId: text('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
+  date: text('date').notNull(), // YYYY-MM-DD
+  reason: text('reason').notNull(),
+  sessionId: text('session_id').references(() => sessions.id, { onDelete: 'set null' }),
+  lectures: text('lectures').notNull(), // JSON stringified array of lectures
+  status: text('status').$type<'pending' | 'approved' | 'rejected'>().default('pending').notNull(),
+  adminNotes: text('admin_notes'),
+  reviewedById: text('reviewed_by_id').references(() => users.id, { onDelete: 'set null' }),
+  reviewedAt: integer('reviewed_at', { mode: 'timestamp_ms' }),
+  createdAt: integer('created_at', { mode: 'timestamp_ms' })
+    .notNull()
+    .$defaultFn(() => new Date()),
 });
 
 // Relations Definitions
@@ -94,21 +121,6 @@ export const attendanceRelations = relations(attendance, ({ one }) => ({
   }),
 }));
 
-// On Duty (OD) Requests Table
-export const odRequests = pgTable('od_requests', {
-  id: uuid('id').defaultRandom().primaryKey(),
-  userId: uuid('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
-  date: varchar('date', { length: 20 }).notNull(), // YYYY-MM-DD
-  reason: varchar('reason', { length: 255 }).notNull(),
-  sessionId: uuid('session_id').references(() => sessions.id, { onDelete: 'set null' }),
-  lectures: text('lectures').notNull(), // JSON stringified array of lectures
-  status: varchar('status', { length: 20 }).$type<'pending' | 'approved' | 'rejected'>().default('pending').notNull(),
-  adminNotes: text('admin_notes'),
-  reviewedById: uuid('reviewed_by_id').references(() => users.id, { onDelete: 'set null' }),
-  reviewedAt: timestamp('reviewed_at'),
-  createdAt: timestamp('created_at').defaultNow().notNull(),
-});
-
 export const odRequestsRelations = relations(odRequests, ({ one }) => ({
   user: one(users, {
     fields: [odRequests.userId],
@@ -123,4 +135,3 @@ export const odRequestsRelations = relations(odRequests, ({ one }) => ({
     references: [users.id],
   }),
 }));
-

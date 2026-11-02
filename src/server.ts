@@ -8,7 +8,7 @@ import sessionsRoutes from './routes/sessions.routes';
 import attendanceRoutes from './routes/attendance.routes';
 import usersRoutes from './routes/users.routes';
 import odRoutes from './routes/od.routes';
-import { sql } from './db';
+import { sqlite } from './db';
 import { initDb } from './db/init';
 
 dotenv.config();
@@ -133,8 +133,8 @@ app.use('/api/auth', (req: Request, res: Response, next: NextFunction) => {
 // Health Check & Database Version Endpoint
 app.get('/', async (req: Request, res: Response) => {
   try {
-    const result = await sql`SELECT version()`;
-    const dbVersion = result[0]?.version || 'Neon DB Connected';
+    const row = sqlite.prepare('SELECT sqlite_version() as version').get() as { version: string } | undefined;
+    const dbVersion = `SQLite v${row?.version || '3.x'}`;
     res.json({
       status: 'online',
       app: 'Club DCC Camu Attendance Backend',
@@ -145,7 +145,7 @@ app.get('/', async (req: Request, res: Response) => {
     res.json({
       status: 'online',
       app: 'Club DCC Camu Attendance Backend',
-      database: 'Database offline or credentials missing in .env',
+      database: 'Database offline or error querying SQLite',
       error: error.message,
     });
   }
