@@ -4,6 +4,7 @@ import { attendance, sessions, users, teams } from '../db/schema';
 import { eq, and, desc, sql } from 'drizzle-orm';
 import { verifyToken, requireAdmin, requireViewer, blockAdvisor, isUuid, AuthenticatedRequest } from '../middleware/auth';
 import { getAcademicYear, isSessionApplicableToUser, parseTargetTeamIds, parseTargetYears } from '../utils/member-helpers';
+import { generateCsv, CsvColumn } from '../utils/csv';
 
 const router = Router();
 
@@ -618,5 +619,123 @@ const getAdminAnalyticsHandler = async (req: AuthenticatedRequest, res: Response
 router.get('/analytics', verifyToken, requireViewer, getAdminAnalyticsHandler);
 router.get('/admin-analytics', verifyToken, requireViewer, getAdminAnalyticsHandler);
 router.get('/admin_analytics', verifyToken, requireViewer, getAdminAnalyticsHandler);
+
+// GET /api/attendance/export/csv (Admin + Advisor: Export attendance records with optional filters)
+router.get('/export/csv', verifyToken, requireViewer, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { sessionId, startDate, endDate, teamId, status } = req.query;
+
+    const [allUsers, allSessions, allAttendance, allTeams] = await Promise.all([
+      db.select().from(users),
+      db.select().from(sessions).orderBy(desc(sessions.startTime)),
+      db.select().from(attendance).orderBy(desc(attendance.scannedAt)),
+      db.select().from(teams),
+    ]);
+
+    const userMap = new Map(allUsers.map((u) => [u.id, u]));
+    const sessionMap = new Map(allSessions.map((s) => [s.id, s]));
+    const teamMap = new Map(allTeams.map((t) => [t.id, t]));
+
+    let filtered = allAttendance;
+
+    // Filter by Session
+    if (sessionId && typeof sessionId === 'string' && sessionId !== 'all') {
+      filtered = filtered.filter((a) => a.sessionId === sessionId);
+    }
+
+    // Filter by Status
+    if (status && typeof status === 'string' && status !== 'all') {
+      filtered = filtered.filter((a) => a.status === status);
+    }
+
+    // Filter by Date Range (scannedAt)
+    if (startDate && typeof startDate === 'string') {
+      const startMs = new Date(startDate).getTime();
+      if (!isNaN(startMs)) {
+        filtered = filtered.filter((a) => {
+          const t = a.scannedAt instanceof Date ? a.scannedAt.getTime() : new Date(a.scannedAt).getTime();
+          return t >= startMs;
+        });
+      }
+    }
+
+    if (endDate && typeof endDate === 'string') {
+      // include up to 23:59:59.999 of the end date
+      const endD = new Date(endDate);
+      endD.setHours(23, 59, 59, 999);
+      const endMs = endD.getTime();
+      if (!isNaN(endMs)) {
+        filtered = filtered.filter((a) => {
+          const t = a.scannedAt instanceof Date ? a.scannedAt.getTime() : new Date(a.scannedAt).getTime();
+          return t <= endMs;
+        });
+      }
+    }
+
+    // Filter by Member Team
+    if (teamId && typeof teamId === 'string' && teamId !== 'all') {
+      filtered = filtered.filter((a) => {
+        const u = userMap.get(a.userId);
+        return u && u.teamId === teamId;
+      });
+    }
+
+    // Format export rows
+    const exportRows = filtered.map((a) => {
+      const u = userMap.get(a.userId);
+      const s = sessionMap.get(a.sessionId);
+      const userTeam = u?.teamId ? teamMap.get(u.teamId) : null;
+
+      const scannedDate = a.scannedAt instanceof Date ? a.scannedAt : new Date(a.scannedAt);
+      const sessionStartDate = s?.startTime ? (s.startTime instanceof Date ? s.startTime : new Date(s.startTime)) : null;
+
+      return {
+        id: a.id,
+        userName: u?.name || 'Unknown',
+        rollNumber: u?.rollNumber || 'N/A',
+        email: u?.email || 'N/A',
+        teamName: userTeam?.name || 'Unassigned',
+        position: u?.position || 'Member',
+        role: u?.role || 'user',
+        sessionTitle: s?.title || 'Unknown Session',
+        sessionType: s?.type || 'regular',
+        sessionLocation: s?.location || 'N/A',
+        sessionDate: sessionStartDate ? sessionStartDate.toLocaleDateString('en-IN') : 'N/A',
+        status: a.status.toUpperCase(),
+        scanMethod: a.scanMethod,
+        scannedAtFormatted: scannedDate.toLocaleString('en-IN'),
+        scannedAtIso: scannedDate.toISOString(),
+      };
+    });
+
+    const columns: CsvColumn[] = [
+      { key: 'id', label: 'Record ID' },
+      { key: 'userName', label: 'Member Name' },
+      { key: 'rollNumber', label: 'Roll Number' },
+      { key: 'email', label: 'Email' },
+      { key: 'teamName', label: 'Team / Wing' },
+      { key: 'position', label: 'Position' },
+      { key: 'role', label: 'Role' },
+      { key: 'sessionTitle', label: 'Session Title' },
+      { key: 'sessionType', label: 'Session Type' },
+      { key: 'sessionLocation', label: 'Session Location' },
+      { key: 'sessionDate', label: 'Session Date' },
+      { key: 'status', label: 'Status' },
+      { key: 'scanMethod', label: 'Scan Method' },
+      { key: 'scannedAtFormatted', label: 'Scanned At (IST)' },
+      { key: 'scannedAtIso', label: 'Scanned At (ISO)' },
+    ];
+
+    const csvData = generateCsv(columns, exportRows);
+    const dateStamp = new Date().toISOString().slice(0, 10);
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="dcc_attendance_${dateStamp}.csv"`);
+    return res.status(200).send(csvData);
+  } catch (error: any) {
+    console.error('Failed to export attendance CSV:', error);
+    return res.status(500).json({ error: 'Failed to generate attendance CSV.', message: error.message });
+  }
+});
 
 export default router;

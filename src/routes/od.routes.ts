@@ -4,6 +4,7 @@ import { odRequests, users, sessions, teams } from '../db/schema';
 import { eq, desc, and } from 'drizzle-orm';
 import { verifyToken, requireAdmin, requireViewer, isUuid, AuthenticatedRequest } from '../middleware/auth';
 import { getAcademicYear } from '../utils/member-helpers';
+import { generateCsv, CsvColumn } from '../utils/csv';
 
 const router = Router();
 
@@ -243,6 +244,112 @@ router.delete('/:id', verifyToken, async (req: AuthenticatedRequest, res: Respon
     return res.json({ message: 'OD request cancelled successfully.' });
   } catch (error: any) {
     return res.status(500).json({ error: 'Failed to delete OD request.' });
+  }
+});
+
+// GET /api/od/export/csv (Admin + Advisor: Export OD requests with optional filters)
+router.get('/export/csv', verifyToken, requireViewer, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { status, startDate, endDate, teamId } = req.query;
+
+    const [allODs, allUsers, allTeams] = await Promise.all([
+      db.select().from(odRequests).orderBy(desc(odRequests.createdAt)),
+      db.select().from(users),
+      db.select().from(teams),
+    ]);
+
+    const userMap = new Map(allUsers.map((u) => [u.id, u]));
+    const teamMap = new Map(allTeams.map((t) => [t.id, t]));
+
+    let filtered = allODs;
+
+    // Filter by Status
+    if (status && typeof status === 'string' && status !== 'all') {
+      filtered = filtered.filter((od) => od.status === status);
+    }
+
+    // Filter by Date (od.date or createdAt)
+    if (startDate && typeof startDate === 'string') {
+      filtered = filtered.filter((od) => od.date >= startDate);
+    }
+
+    if (endDate && typeof endDate === 'string') {
+      filtered = filtered.filter((od) => od.date <= endDate);
+    }
+
+    // Filter by Member Team
+    if (teamId && typeof teamId === 'string' && teamId !== 'all') {
+      filtered = filtered.filter((od) => {
+        const u = userMap.get(od.userId);
+        return u && u.teamId === teamId;
+      });
+    }
+
+    const exportRows = filtered.map((od) => {
+      const u = userMap.get(od.userId);
+      const reviewer = od.reviewedById ? userMap.get(od.reviewedById) : null;
+      const userTeam = u?.teamId ? teamMap.get(u.teamId) : null;
+
+      let lectureItems: LectureItem[] = [];
+      try {
+        lectureItems = JSON.parse(od.lectures || '[]');
+      } catch {
+        lectureItems = [];
+      }
+
+      const lecturesSummary = lectureItems
+        .map((l, idx) => `[P${idx + 1}: ${l.timeSlot}] ${l.subjectName} (${l.subjectCode}) - ${l.facultyName}`)
+        .join('; ');
+
+      const createdDate = od.createdAt instanceof Date ? od.createdAt : new Date(od.createdAt);
+      const reviewedDate = od.reviewedAt ? (od.reviewedAt instanceof Date ? od.reviewedAt : new Date(od.reviewedAt)) : null;
+
+      return {
+        id: od.id,
+        userName: u?.name || 'Unknown',
+        rollNumber: u?.rollNumber || 'N/A',
+        email: u?.email || 'N/A',
+        teamName: userTeam?.name || 'Unassigned',
+        academicYear: u?.rollNumber ? getAcademicYear(u.rollNumber) : 'N/A',
+        odDate: od.date,
+        reason: od.reason,
+        lecturesCount: lectureItems.length,
+        lecturesSummary: lecturesSummary || 'No lectures listed',
+        status: od.status.toUpperCase(),
+        adminNotes: od.adminNotes || '',
+        reviewedBy: reviewer?.name || (od.status === 'pending' ? 'Pending Review' : 'System / Advisor'),
+        reviewedAtFormatted: reviewedDate ? reviewedDate.toLocaleString('en-IN') : 'N/A',
+        createdAtFormatted: createdDate.toLocaleString('en-IN'),
+      };
+    });
+
+    const columns: CsvColumn[] = [
+      { key: 'id', label: 'OD Request ID' },
+      { key: 'userName', label: 'Member Name' },
+      { key: 'rollNumber', label: 'Roll Number' },
+      { key: 'email', label: 'Email' },
+      { key: 'teamName', label: 'Team / Wing' },
+      { key: 'academicYear', label: 'Academic Year' },
+      { key: 'odDate', label: 'OD Date' },
+      { key: 'reason', label: 'Reason / Event' },
+      { key: 'lecturesCount', label: 'Total Periods' },
+      { key: 'lecturesSummary', label: 'Lectures Details' },
+      { key: 'status', label: 'Status' },
+      { key: 'adminNotes', label: 'Admin Remarks' },
+      { key: 'reviewedBy', label: 'Reviewed By' },
+      { key: 'reviewedAtFormatted', label: 'Reviewed At (IST)' },
+      { key: 'createdAtFormatted', label: 'Submitted At (IST)' },
+    ];
+
+    const csvData = generateCsv(columns, exportRows);
+    const dateStamp = new Date().toISOString().slice(0, 10);
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="dcc_od_requests_${dateStamp}.csv"`);
+    return res.status(200).send(csvData);
+  } catch (error: any) {
+    console.error('Failed to export OD requests CSV:', error);
+    return res.status(500).json({ error: 'Failed to generate OD CSV.', message: error.message });
   }
 });
 

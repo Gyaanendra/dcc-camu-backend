@@ -138,6 +138,43 @@ router.get('/', verifyToken, requireViewer, async (req: AuthenticatedRequest, re
   }
 });
 
+// GET /api/users/list (Convenience alias)
+router.get('/list', async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const [allUsers, allTeams] = await Promise.all([
+      db.select().from(users),
+      db.select().from(teams),
+    ]);
+
+    const teamMap = new Map(allTeams.map((t) => [t.id, t]));
+    const result = allUsers.map((u) => {
+      const t = u.teamId ? teamMap.get(u.teamId) : null;
+      return {
+        id: u.id,
+        name: u.name,
+        email: u.email,
+        rollNumber: u.rollNumber,
+        academicYear: getAcademicYear(u.rollNumber),
+        position: u.position,
+        role: u.role,
+        isHead: isUserHead(u),
+        isExempt: u.role === 'advisor',
+        teamId: u.teamId,
+        teamName: t ? t.name : 'Unassigned',
+        teamCode: t ? t.code : 'N/A',
+        teamColor: t?.color || '#3b82f6',
+        avatarUrl: u.avatarUrl,
+        createdAt: u.createdAt,
+      };
+    });
+
+    result.sort((a, b) => a.name.localeCompare(b.name));
+    return res.json({ success: true, total: result.length, members: result });
+  } catch (error: any) {
+    return res.status(500).json({ error: 'Failed to list users.' });
+  }
+});
+
 // PUT / PATCH /api/users/:id and /api/users/:id/role (Admin update user details, role, position, team)
 const updateUserHandler = async (req: AuthenticatedRequest, res: Response) => {
   try {

@@ -8,7 +8,10 @@ import sessionsRoutes from './routes/sessions.routes';
 import attendanceRoutes from './routes/attendance.routes';
 import usersRoutes from './routes/users.routes';
 import odRoutes from './routes/od.routes';
-import { sqlite } from './db';
+import databaseRoutes from './routes/database.routes';
+import { sqlite, db } from './db';
+import { users, teams } from './db/schema';
+import { getAcademicYear, isUserHead } from './utils/member-helpers';
 import { initDb } from './db/init';
 
 dotenv.config();
@@ -151,6 +154,78 @@ app.get('/', async (req: Request, res: Response) => {
   }
 });
 
+// GET /api/list (Fast club members directory listing)
+app.get('/api/list', async (req: Request, res: Response) => {
+  try {
+    const [allUsers, allTeams] = await Promise.all([
+      db.select().from(users),
+      db.select().from(teams),
+    ]);
+
+    const teamMap = new Map(allTeams.map((t) => [t.id, t]));
+    const { team, role, search } = req.query;
+
+    let result = allUsers.map((u) => {
+      const t = u.teamId ? teamMap.get(u.teamId) : null;
+      return {
+        id: u.id,
+        name: u.name,
+        email: u.email,
+        rollNumber: u.rollNumber,
+        academicYear: getAcademicYear(u.rollNumber),
+        position: u.position,
+        role: u.role,
+        isHead: isUserHead(u),
+        isExempt: u.role === 'advisor',
+        teamId: u.teamId,
+        teamName: t ? t.name : 'Unassigned',
+        teamCode: t ? t.code : 'N/A',
+        teamColor: t?.color || '#3b82f6',
+        avatarUrl: u.avatarUrl,
+        createdAt: u.createdAt,
+      };
+    });
+
+    if (team && typeof team === 'string') {
+      const q = team.trim().toLowerCase();
+      result = result.filter(
+        (m) =>
+          m.teamName.toLowerCase().includes(q) ||
+          m.teamCode.toLowerCase() === q ||
+          m.teamId === team
+      );
+    }
+
+    if (role && typeof role === 'string') {
+      result = result.filter((m) => m.role.toLowerCase() === role.trim().toLowerCase());
+    }
+
+    if (search && typeof search === 'string') {
+      const q = search.trim().toLowerCase();
+      result = result.filter(
+        (m) =>
+          m.name.toLowerCase().includes(q) ||
+          m.rollNumber.toLowerCase().includes(q) ||
+          m.email.toLowerCase().includes(q) ||
+          m.position.toLowerCase().includes(q)
+      );
+    }
+
+    // Sort alphabetically by name
+    result.sort((a, b) => a.name.localeCompare(b.name));
+
+    return res.json({
+      success: true,
+      total: result.length,
+      members: result,
+      users: result, // Alias for convenient consumption
+    });
+  } catch (error: any) {
+    console.error('Error fetching /api/list:', error);
+    return res.status(500).json({ error: 'Failed to retrieve club members list.' });
+  }
+});
+
 // API Routes Registration
 app.use('/api/auth', authRoutes);
 app.use('/api/teams', teamsRoutes);
@@ -158,6 +233,7 @@ app.use('/api/sessions', sessionsRoutes);
 app.use('/api/attendance', attendanceRoutes);
 app.use('/api/users', usersRoutes);
 app.use('/api/od', odRoutes);
+app.use('/api/database', databaseRoutes);
 
 // Error handling middleware
 app.use((err: any, req: Request, res: Response, next: NextFunction) => {
