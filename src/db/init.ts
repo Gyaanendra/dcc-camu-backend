@@ -83,13 +83,85 @@ export async function initDb() {
       );
     `);
 
-    // 6. Performance Indexes for instant lookup & QR scanning
+    // 6. Micro-Team Management & Summit Tables
+    sqlite.exec(`
+      CREATE TABLE IF NOT EXISTS events (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        code TEXT NOT NULL UNIQUE,
+        description TEXT,
+        start_date INTEGER,
+        end_date INTEGER,
+        status TEXT DEFAULT 'active' NOT NULL,
+        created_by_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+        created_at INTEGER NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS event_sessions (
+        id TEXT PRIMARY KEY,
+        event_id TEXT REFERENCES events(id) ON DELETE CASCADE NOT NULL,
+        title TEXT NOT NULL,
+        location TEXT DEFAULT 'Auditorium / Main Hall',
+        start_time INTEGER NOT NULL,
+        end_time INTEGER NOT NULL,
+        is_active TEXT DEFAULT 'true' NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS micro_teams (
+        id TEXT PRIMARY KEY,
+        event_id TEXT REFERENCES events(id) ON DELETE CASCADE NOT NULL,
+        name TEXT NOT NULL,
+        code TEXT NOT NULL,
+        leader_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+        is_leadership_managed INTEGER DEFAULT 0 NOT NULL,
+        description TEXT,
+        created_at INTEGER NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS micro_team_members (
+        id TEXT PRIMARY KEY,
+        micro_team_id TEXT REFERENCES micro_teams(id) ON DELETE CASCADE NOT NULL,
+        user_id TEXT REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+        role_in_team TEXT DEFAULT 'member' NOT NULL,
+        assigned_at INTEGER NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS micro_team_sessions (
+        id TEXT PRIMARY KEY,
+        micro_team_id TEXT REFERENCES micro_teams(id) ON DELETE CASCADE NOT NULL,
+        session_id TEXT REFERENCES event_sessions(id) ON DELETE CASCADE NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS micro_attendance (
+        id TEXT PRIMARY KEY,
+        session_id TEXT REFERENCES event_sessions(id) ON DELETE CASCADE NOT NULL,
+        micro_team_id TEXT REFERENCES micro_teams(id) ON DELETE CASCADE NOT NULL,
+        user_id TEXT REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+        status TEXT DEFAULT 'present' NOT NULL,
+        marked_by_id TEXT REFERENCES users(id) ON DELETE SET NULL NOT NULL,
+        marked_at INTEGER NOT NULL,
+        notes TEXT,
+        updated_by_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+        updated_at INTEGER
+      );
+    `);
+
+    // 7. Performance Indexes for instant lookup & QR scanning
     sqlite.exec(`
       CREATE INDEX IF NOT EXISTS idx_sessions_qr_code_token ON sessions(qr_code_token);
       CREATE INDEX IF NOT EXISTS idx_sessions_is_active ON sessions(is_active);
       CREATE INDEX IF NOT EXISTS idx_users_roll_number ON users(roll_number);
       CREATE INDEX IF NOT EXISTS idx_attendance_session_user ON attendance(session_id, user_id);
       CREATE INDEX IF NOT EXISTS idx_od_user ON od_requests(user_id);
+
+      CREATE INDEX IF NOT EXISTS idx_event_sessions_event_id ON event_sessions(event_id);
+      CREATE INDEX IF NOT EXISTS idx_micro_teams_event_id ON micro_teams(event_id);
+      CREATE INDEX IF NOT EXISTS idx_micro_team_members_team_user ON micro_team_members(micro_team_id, user_id);
+      CREATE INDEX IF NOT EXISTS idx_micro_team_sessions_map ON micro_team_sessions(micro_team_id, session_id);
+      CREATE INDEX IF NOT EXISTS idx_micro_attendance_lookup ON micro_attendance(session_id, user_id);
+      CREATE INDEX IF NOT EXISTS idx_micro_attendance_team ON micro_attendance(micro_team_id, session_id);
     `);
 
     // 7. Auto-assign Notionist avatars for any members missing avatar_url

@@ -9,6 +9,7 @@ import attendanceRoutes from './routes/attendance.routes';
 import usersRoutes from './routes/users.routes';
 import odRoutes from './routes/od.routes';
 import databaseRoutes from './routes/database.routes';
+import microRoutes from './routes/micro.routes';
 import { sqlite, db } from './db';
 import { users, teams } from './db/schema';
 import { getAcademicYear, isUserHead } from './utils/member-helpers';
@@ -234,6 +235,7 @@ app.use('/api/attendance', attendanceRoutes);
 app.use('/api/users', usersRoutes);
 app.use('/api/od', odRoutes);
 app.use('/api/database', databaseRoutes);
+app.use('/api/micro', microRoutes);
 
 // Error handling middleware
 app.use((err: any, req: Request, res: Response, next: NextFunction) => {
